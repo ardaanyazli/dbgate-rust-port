@@ -1,0 +1,22 @@
+[package]
+name = "dbgate-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "DbGate core data model and engine driver abstraction (Rust port)"
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ts-rs.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+rusqlite.workspace = true
+base64.workspace = true
+tiberius = { version = "0.12", features = ["tokio", "chrono", "rust_decimal"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+futures-util = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
