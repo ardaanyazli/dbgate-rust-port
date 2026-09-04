@@ -21,3 +21,4 @@ futures-util = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
 mysql_async.workspace = true
+clickhouse.workspace = true

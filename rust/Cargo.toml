@@ -25,6 +25,7 @@ tokio = { version = "1", features = ["full"] }
 rusqlite = { version = "0.32", features = ["bundled", "serde_json"] }
 base64 = "0.22"
 mysql_async = "0.37"
+clickhouse = { version = "0.13", features = ["rustls-tls"] }
 
 # ---- logging ----
 tracing = "0.1"
