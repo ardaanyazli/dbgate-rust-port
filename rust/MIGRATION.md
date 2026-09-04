@@ -96,6 +96,18 @@ Each milestone is shippable and independently testable. Do **not** attempt to
 port all drivers in one pass — that is how broken, unverifiable code is
 produced.
 
+**Milestone 6 (Web mode / axum) is explicitly out of scope** and skipped
+entirely. The Rust backend targets the desktop (Tauri v2) application only.
+
+## Working workflow (commits & pushes)
+
+- **Commit after every driver implementation** (each new `dbgate-core/src/drivers/<engine>.rs`
+  plus its registration and tests) — one focused commit per driver.
+- **Push to `origin` after each milestone completes** (Milestones 1-5; 6 is skipped),
+  not after every individual driver.
+- Milestone 1 is committed and pushed. Milestone 3 (network SQL engines) is in
+  progress — SQL Server and PostgreSQL drivers already done.
+
 ## Verification discipline (carried into every driver)
 
 - `cargo test` — unit tests per driver (query, version, analyse).
