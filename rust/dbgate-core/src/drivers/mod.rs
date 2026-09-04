@@ -5,5 +5,6 @@
 //! `sqlite` is the reference implementation every other driver follows.
 
 pub mod mssql;
+pub mod mysql;
 pub mod postgres;
 pub mod sqlite;

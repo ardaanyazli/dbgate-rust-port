@@ -24,6 +24,7 @@ tokio = { version = "1", features = ["full"] }
 # ---- database drivers (Rust-native replacements for Node clients) ----
 rusqlite = { version = "0.32", features = ["bundled", "serde_json"] }
 base64 = "0.22"
+mysql_async = "0.37"
 
 # ---- logging ----
 tracing = "0.1"
