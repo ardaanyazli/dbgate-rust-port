@@ -41,14 +41,14 @@ thread-safe `DbHandle`, and mapping driver rows to the DbGate JSON value model.
 | 2 | MySQL | dbgate-plugin-mysql | `mysql` | Async `Conn`/pool. |
 | 3 | MariaDB | dbgate-plugin-mysql | `mysql` (MariaDB wire) | Same crate, different flags/dialect. |
 | 4 | SQL Server | dbgate-plugin-mssql | `tiberius` | TDS protocol. |
-| 5 | Oracle | dbgate-plugin-oracle | `oracle` | OCI/Thick or thin. |
+| 5 | Oracle | dbgate-plugin-oracle | `oracledb` | ✅ **DONE** — thin/blocking, Send+Sync. |
 | 6 | MongoDB | dbgate-plugin-mongo | `mongodb` | Document model, not SQL. |
 | 7 | Redis | dbgate-plugin-redis | `redis` | Key/command model, not SQL. |
 | 8 | SQLite | dbgate-plugin-sqlite | `rusqlite` | ✅ **DONE** (reference). |
 | 9 | DuckDB | dbgate-plugin-duckdb | `duckdb` | QL / arrow. |
 | 10 | ClickHouse | dbgate-plugin-clickhouse | `clickhouse` | HTTP/TCK. |
 | 11 | Cassandra | dbgate-plugin-cassandra | `scylla` | CQL, not SQL. |
-| 12 | Firebird | dbgate-plugin-firebird | `firebird` | |
+| 12 | Firebird | dbgate-plugin-firebird | `rsfbclient` | ✅ **DONE** — `pure_rust`, blocking `&mut self` → `Mutex<SimpleConnection>`. |
 | 13 | CockroachDB | (postgres plugin) | `postgres` | Postgres wire + cluster queries. |
 | 14 | Redshift (Premium) | dbgate-plugin-postgres | `postgres` | Postgres wire. |
 | 15 | CosmosDB / Firestore (Premium) | REST/HTTP | reqwest | REST/OData drivers already in `packages/rest`. |
@@ -105,9 +105,9 @@ entirely. The Rust backend targets the desktop (Tauri v2) application only.
   plus its registration and tests) — one focused commit per driver.
 - **Push to `origin` after each milestone completes** (Milestones 1-5; 6 is skipped),
   not after every individual driver.
-- Milestone 1 is committed and pushed. Milestone 3 (network SQL engines) is in
-  progress — SQL Server, PostgreSQL, MySQL/MariaDB, ClickHouse, and Oracle
-  drivers already done (Firebird remains).
+- Milestone 1 is committed and pushed. Milestone 3 (network SQL engines) is
+  **complete and pushed to origin** — SQL Server, PostgreSQL, MySQL/MariaDB,
+  ClickHouse, Oracle, and Firebird drivers are all done.
 
 ## Verification discipline (carried into every driver)
 
