@@ -26,6 +26,7 @@ rusqlite = { version = "0.32", features = ["bundled", "serde_json"] }
 base64 = "0.22"
 mysql_async = "0.37"
 clickhouse = { version = "0.13", features = ["rustls-tls"] }
+oracledb = "26.0.0-beta.2"
 
 # ---- logging ----
 tracing = "0.1"

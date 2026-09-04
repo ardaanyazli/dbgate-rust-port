@@ -44,6 +44,7 @@ impl DbgmState {
         drivers.register(dbgate_core::drivers::mysql::driver_ref());
         drivers.register(dbgate_core::drivers::mysql::mariadb_driver_ref());
         drivers.register(dbgate_core::drivers::clickhouse::driver_ref());
+        drivers.register(dbgate_core::drivers::oracle::driver_ref());
         Self {
             drivers,
             connections: Mutex::new(HashMap::new()),

@@ -106,7 +106,8 @@ entirely. The Rust backend targets the desktop (Tauri v2) application only.
 - **Push to `origin` after each milestone completes** (Milestones 1-5; 6 is skipped),
   not after every individual driver.
 - Milestone 1 is committed and pushed. Milestone 3 (network SQL engines) is in
-  progress — SQL Server, PostgreSQL, and MySQL/MariaDB drivers already done.
+  progress — SQL Server, PostgreSQL, MySQL/MariaDB, ClickHouse, and Oracle
+  drivers already done (Firebird remains).
 
 ## Verification discipline (carried into every driver)
 
