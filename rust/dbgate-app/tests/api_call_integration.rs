@@ -1,0 +1,70 @@
+//! Integration tests driving the `api_call` bridge dispatch end-to-end,
+//! mirroring the flow the Svelte frontend performs on startup.
+
+use dbgate_app_lib::routes::dispatch;
+use dbgate_app_lib::DbgmState;
+use serde_json::{json, Value};
+
+fn test_state(tag: &str) -> DbgmState {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("dbgate-integration-{tag}-{nanos}"));
+    DbgmState::with_data_dir(dir)
+}
+
+#[test]
+fn connections_list_returns_empty_array_fresh() {
+    let state = test_state("conns-empty");
+    let res = dispatch(&state, "connections_list", json!({})).unwrap();
+    assert_eq!(res, Value::Array(vec![]));
+}
+
+#[test]
+fn plugins_installed_returns_eight_entries() {
+    let state = test_state("plugins");
+    let res = dispatch(&state, "plugins_installed", json!({})).unwrap();
+    let arr = res.as_array().expect("array");
+    assert_eq!(arr.len(), 8);
+}
+
+#[test]
+fn config_get_returns_config_object() {
+    let state = test_state("config");
+    let res = dispatch(&state, "config_get", json!({})).unwrap();
+    assert_eq!(res["isElectron"], json!(true));
+    assert_eq!(res["isTauri"], json!(true));
+    assert_eq!(res["skipAllAuth"], json!(true));
+}
+
+#[test]
+fn sqlite_save_list_select_round_trip() {
+    let state = test_state("sqlite-flow");
+
+    let saved = dispatch(
+        &state,
+        "connections_save",
+        json!({
+            "_id": "saved-sqlite",
+            "engine": "sqlite@dbgate-plugin-sqlite",
+            "name": "saved",
+            "databaseFile": ":memory:"
+        }),
+    )
+    .unwrap();
+    assert_eq!(saved["_id"], json!("saved-sqlite"));
+
+    let list = dispatch(&state, "connections_list", json!({})).unwrap();
+    let arr = list.as_array().expect("array");
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["_id"], json!("saved-sqlite"));
+
+    let rows = dispatch(
+        &state,
+        "database_connections_sql_select",
+        json!({ "conid": "saved-sqlite", "sql": "SELECT 1 AS one" }),
+    )
+    .unwrap();
+    assert_eq!(rows["rows"][0]["one"], json!(1));
+}

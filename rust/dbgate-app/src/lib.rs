@@ -9,7 +9,7 @@
 //! IPC surface (window ops, menus, dialogs) and the database API.
 
 mod events;
-mod routes;
+pub mod routes;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
