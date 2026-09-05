@@ -40,6 +40,59 @@ class ElectronApi {
   }
 }
 
+class TauriApi {
+  private unlisteners = new Map<string, Array<{ listener: any; unlisten: Function }>>();
+
+  constructor() {}
+
+  async invoke<T = any>(route: string, args?: any): Promise<T> {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke(route.replace(/-/g, '_'), args ?? {});
+  }
+
+  async send(msg: string, args: any = null) {
+    return Promise.resolve();
+  }
+
+  async addEventListener(channel: string, listener: any) {
+    const { listen } = await import('@tauri-apps/api/event');
+    const unlisten = await listen(channel, event => {
+      listener(null, event.payload);
+    });
+    const entries = this.unlisteners.get(channel) || [];
+    entries.push({ listener, unlisten });
+    this.unlisteners.set(channel, entries);
+  }
+
+  async removeEventListener(channel: string, listener: any) {
+    const entries = this.unlisteners.get(channel) || [];
+    for (const entry of entries) {
+      if (entry.listener === listener) {
+        entry.unlisten();
+      }
+    }
+    this.unlisteners.set(
+      channel,
+      entries.filter(entry => entry.listener !== listener)
+    );
+    if (this.unlisteners.get(channel)?.length === 0) {
+      this.unlisteners.delete(channel);
+    }
+  }
+
+  async showOpenDialog(options: any) {
+    return null;
+  }
+
+  async showSaveDialog(options: any) {
+    return null;
+  }
+
+  async showItemInFolder(path: string) {}
+
+  async openExternal(url: string) {}
+}
+
 function getIpcRenderer() {
   if (window['require']) {
     const electron = window['require']('electron');
@@ -48,24 +101,16 @@ function getIpcRenderer() {
   return null;
 }
 
-export function isElectronAvailable() {
-  return !!getIpcRenderer();
+function isTauriAvailable() {
+  return !!(window as any).__TAURI__ || !!(window as any).__TAURI_INTERNALS__;
 }
 
-const apiInstance = isElectronAvailable() ? new ElectronApi() : null;
+export function isElectronAvailable() {
+  return !!(getIpcRenderer() || isTauriAvailable());
+}
 
-export default function getElectron(): ElectronApi {
+const apiInstance = getIpcRenderer() ? new ElectronApi() : isTauriAvailable() ? new TauriApi() : null;
+
+export default function getElectron(): ElectronApi | TauriApi {
   return apiInstance;
-  // try {
-  //   // @ts-ignore
-  //   return ipcRenderer;
-  // } catch (e) {
-  //   return null;
-  // }
-  // if (window['require']) {
-  //   const electron = window['require']('electron');
-  //   console.log('electron?.ipcRenderer', electron?.ipcRenderer);
-  //   return electron?.ipcRenderer;
-  // }
-  // return null;
 }

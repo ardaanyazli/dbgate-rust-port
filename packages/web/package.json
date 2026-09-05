@@ -21,6 +21,7 @@
     "@energiency/chartjs-plugin-piechart-outlabels": "^1.3.4",
     "@mdi/font": "^7.1.96",
     "@tailwindcss/postcss": "^4.1.18",
+    "@tauri-apps/api": "^2.11.1",
     "@tsconfig/svelte": "^1.0.0",
     "ace-builds": "^1.36.5",
     "autoprefixer": "^10.4.23",
