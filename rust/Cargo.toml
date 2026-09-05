@@ -33,6 +33,9 @@ rsfbclient = { version = "0.28", default-features = false, features = ["pure_rus
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
+# ---- utilities ----
+uuid = { version = "1", features = ["v4"] }
+
 # ---- tauri v2 ----
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"

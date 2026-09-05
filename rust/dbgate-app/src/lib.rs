@@ -8,6 +8,7 @@
 //! connections, and exposes Tauri commands that mirror both the Electron
 //! IPC surface (window ops, menus, dialogs) and the database API.
 
+mod events;
 mod routes;
 
 use std::collections::HashMap;
@@ -19,6 +20,8 @@ use dbgate_core::driver::{DbHandle, EngineDriver, QueryOptions};
 use dbgate_core::query::QueryResult;
 use dbgate_core::registry::DriverRegistry;
 use serde_json::Value;
+use tauri::Emitter;
+use tauri::Manager;
 
 // ---------------------------------------------------------------------------
 // Shared application state
@@ -30,12 +33,31 @@ struct OpenConnection {
     handle: DbHandle,
 }
 
+type EventSink = Arc<dyn Fn(&str, Value) + Send + Sync>;
+
+/// A query session: its metadata plus the session-scoped connection,
+/// mirroring the Electron model where every session owns a dedicated
+/// connection (a forked subprocess in the JS implementation).
+struct Session {
+    sesid: String,
+    conid: String,
+    database: Option<String>,
+    driver: Arc<dyn EngineDriver>,
+    handle: DbHandle,
+}
+
 /// Application-wide state managed by Tauri.
 pub struct DbgmState {
     /// All registered engine drivers.
     drivers: DriverRegistry,
     /// Open connections keyed by their connection id.
     connections: Mutex<HashMap<String, OpenConnection>>,
+    /// Open query sessions keyed by their session id.
+    sessions: Mutex<HashMap<String, Session>>,
+    /// Optional frontend event sink; installs the real Tauri emitter in
+    /// `run()` and a recording sink in tests so route handlers can be
+    /// verified without a running Tauri runtime.
+    event_emitter: Mutex<Option<EventSink>>,
     /// Data directory for stored connections (`connections.jsonl`).
     pub data_dir: PathBuf,
 }
@@ -59,7 +81,24 @@ impl DbgmState {
         Self {
             drivers,
             connections: Mutex::new(HashMap::new()),
+            sessions: Mutex::new(HashMap::new()),
+            event_emitter: Mutex::new(None),
             data_dir,
+        }
+    }
+
+    /// Install the frontend event sink used by route handlers to emit Tauri
+    /// events to the webview. Called once from `run()`; tests install a
+    /// recording sink to assert emitted event names and payloads.
+    pub fn install_event_emitter(&self, emitter: EventSink) {
+        *self.event_emitter.lock().unwrap() = Some(emitter);
+    }
+
+    /// Emit an event to the frontend. No-op until an emitter is installed,
+    /// so route logic is safe and deterministic outside the Tauri runtime.
+    pub fn emit_event(&self, event: &str, payload: Value) {
+        if let Some(emitter) = self.event_emitter.lock().unwrap().as_ref() {
+            emitter(event, payload);
         }
     }
 
@@ -237,8 +276,13 @@ pub fn run() {
             get_version,
             analyse_full,
         ])
-        .setup(|_app| {
+        .setup(|app| {
             tracing::info!("DbGate (Rust/Tauri v2 port) starting");
+            let handle = app.handle().clone();
+            let state = app.state::<Arc<DbgmState>>();
+            state.install_event_emitter(Arc::new(move |event, payload| {
+                let _ = handle.emit(event, payload);
+            }));
             Ok(())
         })
         .run(tauri::generate_context!())

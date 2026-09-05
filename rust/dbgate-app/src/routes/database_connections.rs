@@ -17,6 +17,16 @@ use super::connections::ConnectionsStore;
 use super::route_error;
 use crate::{DbgmState, OpenConnection};
 
+/// Load the saved connection definition for `conid` from `connections.jsonl`.
+pub(crate) fn load_definition(state: &DbgmState, conid: &str) -> Result<ConnectionDefinition, String> {
+    let store = ConnectionsStore::new(ConnectionsStore::default_path(state));
+    let saved = store.get(conid)?;
+    if saved.is_null() {
+        return Err(route_error(format!("Unknown connection {conid}")));
+    }
+    serde_json::from_value(saved).map_err(|e| route_error(format!("Invalid connection definition: {e}")))
+}
+
 /// Bring the connection for `conid` into `DbgmState.connections`, loading
 /// its definition from `connections.jsonl` and calling the driver when the
 /// connection is not already open.
@@ -31,13 +41,7 @@ fn ensure_connected(state: &DbgmState, conid: &str) -> Result<(), String> {
         }
     }
 
-    let store = ConnectionsStore::new(ConnectionsStore::default_path(state));
-    let saved = store.get(conid)?;
-    if saved.is_null() {
-        return Err(route_error(format!("Unknown connection {conid}")));
-    }
-    let def: ConnectionDefinition =
-        serde_json::from_value(saved).map_err(|e| route_error(format!("Invalid connection definition: {e}")))?;
+    let def = load_definition(state, conid)?;
     let driver = state
         .drivers
         .get(&def.engine)

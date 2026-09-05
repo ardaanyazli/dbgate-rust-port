@@ -44,6 +44,8 @@ pub fn dispatch(
         "database_connections_call_method" => database_connections::call_method(state, args),
         "database_connections_ping" => database_connections::ping(state, args),
         "database_connections_disconnect" => database_connections::disconnect(state, args),
+        "sessions_create" => sessions::create(state, args),
+        "sessions_execute_reader" => sessions::execute_reader(state, args),
         _ => Err(route_error(format!("Route not implemented: {route}"))),
     }
 }
@@ -52,3 +54,4 @@ mod config;
 mod connections;
 mod database_connections;
 mod plugins;
+mod sessions;
