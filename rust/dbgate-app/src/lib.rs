@@ -42,6 +42,7 @@ struct Session {
     sesid: String,
     conid: String,
     database: Option<String>,
+    isolation_level: Option<String>,
     driver: Arc<dyn EngineDriver>,
     handle: DbHandle,
 }

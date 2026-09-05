@@ -35,3 +35,7 @@ pub fn emit_session_recordset(
         json!({ "resultIndex": result_index, "columns": columns }),
     );
 }
+
+pub fn emit_session_closed(state: &DbgmState, sesid: &str) {
+    state.emit_event(&format!("session-closed-{sesid}"), json!({}));
+}
