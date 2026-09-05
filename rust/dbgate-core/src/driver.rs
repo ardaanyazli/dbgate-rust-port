@@ -76,6 +76,7 @@ pub struct WriteTableOptions {
 
 /// A version reported by a database server.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ServerVersion {
     pub version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -83,10 +84,13 @@ pub struct ServerVersion {
 }
 
 /// A database listed on a server.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DatabaseEntry {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub size_on_disk: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub empty: Option<bool>,
 }
 

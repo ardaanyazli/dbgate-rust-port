@@ -9,7 +9,11 @@ use serde_json::Value;
 
 /// A saved connection. Fields are a superset of what every driver needs;
 /// each driver reads the subset it understands.
+///
+/// Serialized camelCase to match both the frontend connection object and the
+/// stored `connections.jsonl` keys (`databaseFile`, `authType`, ...).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConnectionDefinition {
     /// Dotted engine id, e.g. `mysql@dbgate-plugin-mysql`.
     pub engine: String,

@@ -8,13 +8,17 @@
 //! connections, and exposes Tauri commands that mirror both the Electron
 //! IPC surface (window ops, menus, dialogs) and the database API.
 
+mod routes;
+
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use dbgate_core::connection::ConnectionDefinition;
 use dbgate_core::driver::{DbHandle, EngineDriver, QueryOptions};
 use dbgate_core::query::QueryResult;
 use dbgate_core::registry::DriverRegistry;
+use serde_json::Value;
 
 // ---------------------------------------------------------------------------
 // Shared application state
@@ -32,10 +36,16 @@ pub struct DbgmState {
     drivers: DriverRegistry,
     /// Open connections keyed by their connection id.
     connections: Mutex<HashMap<String, OpenConnection>>,
+    /// Data directory for stored connections (`connections.jsonl`).
+    pub data_dir: PathBuf,
 }
 
 impl DbgmState {
     pub fn new() -> Self {
+        Self::with_data_dir(default_data_dir())
+    }
+
+    pub fn with_data_dir(data_dir: PathBuf) -> Self {
         let mut drivers = DriverRegistry::new();
         // Register built-in engines. Add more as drivers are ported.
         drivers.register(dbgate_core::drivers::sqlite::driver_ref());
@@ -49,6 +59,7 @@ impl DbgmState {
         Self {
             drivers,
             connections: Mutex::new(HashMap::new()),
+            data_dir,
         }
     }
 
@@ -59,6 +70,33 @@ impl DbgmState {
             .unwrap_or(0);
         format!("{}-{}", engine.replace('@', "_"), nanos)
     }
+}
+
+/// Data directory used by the Tauri backend (override with `DBGATE_DATA_DIR`).
+fn default_data_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    let base = std::env::var("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir());
+    #[cfg(target_os = "macos")]
+    let base = std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir())
+        .join("Library")
+        .join("Application Support");
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let base = std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::env::var("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| std::env::temp_dir())
+                .join(".local")
+                .join("share")
+        });
+    std::env::var("DBGATE_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| base.join("dbgate"))
 }
 
 impl Default for DbgmState {
@@ -153,6 +191,21 @@ fn analyse_full(
         .map_err(|e| e.to_string())
 }
 
+/// Generic bridge command: dispatch a frontend API route to its handler.
+///
+/// The Svelte frontend (`TauriApi.invoke` in `getElectron.ts`) sends every
+/// API call as `api_call(route, args)` where the route is a
+/// slash/dash-normalized controller name (e.g. `connections-list` arrives
+/// here as `connections_list`).
+#[tauri::command]
+fn api_call(
+    state: tauri::State<'_, Arc<DbgmState>>,
+    route: String,
+    args: Value,
+) -> Result<Value, String> {
+    routes::dispatch(&state, &route, args)
+}
+
 // ---------------------------------------------------------------------------
 // Tauri application entry
 // ---------------------------------------------------------------------------
@@ -176,6 +229,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(Arc::new(DbgmState::new()))
         .invoke_handler(tauri::generate_handler![
+            api_call,
             open_connection,
             run_query,
             close_connection,

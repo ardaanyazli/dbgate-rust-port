@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// A named object (table / view / column / etc.).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NamedObjectInfo {
     pub pure_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -21,6 +22,7 @@ pub struct NamedObjectInfo {
 
 /// Reference to a column, possibly within an index / key definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ColumnReference {
     pub column_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -44,6 +46,7 @@ pub enum ConstraintType {
 
 /// Base for all constraints.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConstraintInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pairing_id: Option<String>,
@@ -54,17 +57,20 @@ pub struct ConstraintInfo {
 
 /// Constraint that references one or more columns.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ColumnsConstraintInfo {
     pub constraint: ConstraintInfo,
     pub columns: Vec<ColumnReference>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PrimaryKeyInfo {
     pub columns_constraint: ColumnsConstraintInfo,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ForeignKeyInfo {
     pub columns_constraint: ColumnsConstraintInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -77,6 +83,7 @@ pub struct ForeignKeyInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IndexInfo {
     pub columns_constraint: ColumnsConstraintInfo,
     pub is_unique: bool,
@@ -87,11 +94,13 @@ pub struct IndexInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UniqueInfo {
     pub columns_constraint: ColumnsConstraintInfo,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CheckInfo {
     pub constraint: ConstraintInfo,
     pub definition: String,
@@ -99,6 +108,7 @@ pub struct CheckInfo {
 
 /// A single table/view column.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ColumnInfo {
     pub column_name: String,
     pub data_type: String,
@@ -138,6 +148,7 @@ pub struct ColumnInfo {
 
 /// Common fields for any database object (table/view/procedure/...).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DatabaseObjectInfo {
     pub pure_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -160,6 +171,7 @@ pub struct DatabaseObjectInfo {
 
 /// SQL-defined object (view/procedure/function/trigger) carrying its DDL.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SqlObjectInfo {
     pub object: DatabaseObjectInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -170,6 +182,7 @@ pub struct SqlObjectInfo {
 
 /// A table (full metadata).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TableInfo {
     pub object: DatabaseObjectInfo,
     pub columns: Vec<ColumnInfo>,
@@ -195,6 +208,7 @@ pub struct TableInfo {
 
 /// A collection (Mongo / Cassandra style).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CollectionInfo {
     pub object: DatabaseObjectInfo,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -205,6 +219,7 @@ pub struct CollectionInfo {
 
 /// A view (columns + create SQL).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ViewInfo {
     pub object: SqlObjectInfo,
     pub columns: Vec<ColumnInfo>,
@@ -220,6 +235,7 @@ pub enum ParameterMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ParameterInfo {
     pub parameter_name: String,
     pub data_type: String,
@@ -230,6 +246,7 @@ pub struct ParameterInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CallableObjectInfo {
     pub object: SqlObjectInfo,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -238,12 +255,14 @@ pub struct CallableObjectInfo {
 
 /// Stored procedure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProcedureInfo {
     pub callable: CallableObjectInfo,
 }
 
 /// Stored function.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FunctionInfo {
     pub callable: CallableObjectInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -281,6 +300,7 @@ pub enum TriggerEventType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TriggerInfo {
     pub object: SqlObjectInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -294,6 +314,7 @@ pub struct TriggerInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SchemaInfo {
     pub schema_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -304,6 +325,7 @@ pub struct SchemaInfo {
 
 /// Aggregate of all object types in a database ("DatabaseInfo").
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DatabaseInfo {
     pub tables: Vec<TableInfo>,
     pub collections: Vec<CollectionInfo>,

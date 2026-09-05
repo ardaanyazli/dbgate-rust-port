@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Metadata for a single column in a query result.
+///
+/// Serialized camelCase to match the Svelte UI `QueryResultColumn` contract.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct QueryResultColumn {
     pub column_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
