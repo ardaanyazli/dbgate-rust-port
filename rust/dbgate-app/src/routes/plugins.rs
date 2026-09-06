@@ -117,9 +117,7 @@ fn sqlite_before_save() -> &'static str {
 /// `getNewObjectTemplates`, `createSaveChangeSetScript`, the default
 /// `dialect`, ...), exactly like the real plugin front-end modules do.
 fn driver_js(m: &dbgate_core::registry::EngineMetadata) -> String {
-    let mut s = String::from(
-        "  {\n    ...window['DBGATE_PACKAGES']['dbgate-tools'].driverBase,\n",
-    );
+    let mut s = String::from("  {\n    ...window['DBGATE_PACKAGES']['dbgate-tools'].driverBase,\n");
     s.push_str(&format!(
         "    engine: {},\n",
         serde_json::to_string(&m.engine).unwrap()
@@ -149,7 +147,10 @@ fn driver_js(m: &dbgate_core::registry::EngineMetadata) -> String {
     ));
     s.push_str("    showConnectionTab: (field) => false");
     if m.database_engine == "sqlite" {
-        s.push_str(&format!(",\n    beforeConnectionSave: {}", sqlite_before_save()));
+        s.push_str(&format!(
+            ",\n    beforeConnectionSave: {}",
+            sqlite_before_save()
+        ));
     }
     s.push_str("\n  }");
     s

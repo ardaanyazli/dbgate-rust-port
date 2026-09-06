@@ -9,6 +9,7 @@
 //! IPC surface (window ops, menus, dialogs) and the database API.
 
 mod events;
+mod jsl;
 pub mod routes;
 
 use std::collections::HashMap;
@@ -55,6 +56,8 @@ pub struct DbgmState {
     connections: Mutex<HashMap<String, OpenConnection>>,
     /// Open query sessions keyed by their session id.
     sessions: Mutex<HashMap<String, Session>>,
+    /// Query result sets keyed by their jslid.
+    jsl: Mutex<HashMap<String, jsl::JslData>>,
     /// Optional frontend event sink; installs the real Tauri emitter in
     /// `run()` and a recording sink in tests so route handlers can be
     /// verified without a running Tauri runtime.
@@ -83,6 +86,7 @@ impl DbgmState {
             drivers,
             connections: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
+            jsl: Mutex::new(HashMap::new()),
             event_emitter: Mutex::new(None),
             data_dir,
         }
@@ -164,10 +168,11 @@ fn open_connection(
     let handle = driver.connect(&definition).map_err(|e| e.to_string())?;
     let conn_id = DbgmState::next_conn_id(&definition.engine);
 
-    state.connections.lock().unwrap().insert(
-        conn_id.clone(),
-        OpenConnection { driver, handle },
-    );
+    state
+        .connections
+        .lock()
+        .unwrap()
+        .insert(conn_id.clone(), OpenConnection { driver, handle });
     Ok(conn_id)
 }
 
@@ -183,12 +188,17 @@ fn run_query(
         .get(&conn_id)
         .ok_or_else(|| format!("Unknown connection {conn_id}"))?;
     let options = QueryOptions::default();
-    conn.driver.query(&conn.handle, &sql, &options).map_err(|e| e.to_string())
+    conn.driver
+        .query(&conn.handle, &sql, &options)
+        .map_err(|e| e.to_string())
 }
 
 /// Close an open connection.
 #[tauri::command]
-fn close_connection(state: tauri::State<'_, Arc<DbgmState>>, conn_id: String) -> Result<(), String> {
+fn close_connection(
+    state: tauri::State<'_, Arc<DbgmState>>,
+    conn_id: String,
+) -> Result<(), String> {
     let mut guard = state.connections.lock().unwrap();
     let conn = guard
         .remove(&conn_id)
@@ -212,7 +222,9 @@ fn get_version(
     let conn = guard
         .get(&conn_id)
         .ok_or_else(|| format!("Unknown connection {conn_id}"))?;
-    conn.driver.get_version(&conn.handle).map_err(|e| e.to_string())
+    conn.driver
+        .get_version(&conn.handle)
+        .map_err(|e| e.to_string())
 }
 
 /// Analyse the full structure of the connected database.
@@ -225,7 +237,10 @@ fn analyse_full(
     let conn = guard
         .get(&conn_id)
         .ok_or_else(|| format!("Unknown connection {conn_id}"))?;
-    let version = conn.driver.get_version(&conn.handle).map_err(|e| e.to_string())?;
+    let version = conn
+        .driver
+        .get_version(&conn.handle)
+        .map_err(|e| e.to_string())?;
     conn.driver
         .analyse_full(&conn.handle, &version.version)
         .map_err(|e| e.to_string())

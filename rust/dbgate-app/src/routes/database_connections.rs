@@ -18,19 +18,23 @@ use super::route_error;
 use crate::{DbgmState, OpenConnection};
 
 /// Load the saved connection definition for `conid` from `connections.jsonl`.
-pub(crate) fn load_definition(state: &DbgmState, conid: &str) -> Result<ConnectionDefinition, String> {
+pub(crate) fn load_definition(
+    state: &DbgmState,
+    conid: &str,
+) -> Result<ConnectionDefinition, String> {
     let store = ConnectionsStore::new(ConnectionsStore::default_path(state));
     let saved = store.get(conid)?;
     if saved.is_null() {
         return Err(route_error(format!("Unknown connection {conid}")));
     }
-    serde_json::from_value(saved).map_err(|e| route_error(format!("Invalid connection definition: {e}")))
+    serde_json::from_value(saved)
+        .map_err(|e| route_error(format!("Invalid connection definition: {e}")))
 }
 
 /// Bring the connection for `conid` into `DbgmState.connections`, loading
 /// its definition from `connections.jsonl` and calling the driver when the
 /// connection is not already open.
-fn ensure_connected(state: &DbgmState, conid: &str) -> Result<(), String> {
+pub(crate) fn ensure_connected(state: &DbgmState, conid: &str) -> Result<(), String> {
     {
         let guard = state
             .connections
@@ -46,7 +50,9 @@ fn ensure_connected(state: &DbgmState, conid: &str) -> Result<(), String> {
         .drivers
         .get(&def.engine)
         .ok_or_else(|| route_error(format!("No driver registered for engine '{}'", def.engine)))?;
-    let handle = driver.connect(&def).map_err(|e| route_error(e.to_string()))?;
+    let handle = driver
+        .connect(&def)
+        .map_err(|e| route_error(e.to_string()))?;
 
     state
         .connections
@@ -117,13 +123,9 @@ pub fn run_script(state: &DbgmState, args: Value) -> Result<Value, String> {
     serde_json::to_value(result).map_err(|e| route_error(e.to_string()))
 }
 
-/// `database_connections_sync_model` — analyse the connected database.
-pub fn sync_model(state: &DbgmState, args: Value) -> Result<Value, String> {
-    let conid = args
-        .get("conid")
-        .and_then(Value::as_str)
-        .ok_or_else(|| route_error("sync_model missing conid"))?;
-
+/// Run `analyse_full` on the connected database and serialize the result.
+/// Shared by `sync_model` and `structure`.
+fn analyse(state: &DbgmState, conid: &str) -> Result<Value, String> {
     ensure_connected(state, conid)?;
     let guard = state
         .connections
@@ -141,6 +143,26 @@ pub fn sync_model(state: &DbgmState, args: Value) -> Result<Value, String> {
         .analyse_full(&conn.handle, &version.version)
         .map_err(|e| route_error(e.to_string()))?;
     serde_json::to_value(info).map_err(|e| route_error(e.to_string()))
+}
+
+/// `database_connections_sync_model` — analyse the connected database.
+pub fn sync_model(state: &DbgmState, args: Value) -> Result<Value, String> {
+    let conid = args
+        .get("conid")
+        .and_then(Value::as_str)
+        .ok_or_else(|| route_error("sync_model missing conid"))?;
+    analyse(state, conid)
+}
+
+/// `database_connections_structure` — full database structure, requested by
+/// the `databaseInfoLoader` (`metadataLoaders.ts`) when a connection is
+/// opened (the table tree in the navigator).
+pub fn structure(state: &DbgmState, args: Value) -> Result<Value, String> {
+    let conid = args
+        .get("conid")
+        .and_then(Value::as_str)
+        .ok_or_else(|| route_error("structure missing conid"))?;
+    analyse(state, conid)
 }
 
 /// `database_connections_refresh` — no-op marker; structure refresh is
@@ -220,6 +242,29 @@ pub fn ping(state: &DbgmState, args: Value) -> Result<Value, String> {
     Ok(json!({ "status": "ok" }))
 }
 
+/// `database_connections_status` — health-check a connection via
+/// `get_version`, mirroring the `connectionStatusLoader` usage in
+/// `metadataLoaders.ts`.
+pub fn status(state: &DbgmState, args: Value) -> Result<Value, String> {
+    let conid = args
+        .get("conid")
+        .and_then(Value::as_str)
+        .ok_or_else(|| route_error("status missing conid"))?;
+
+    ensure_connected(state, conid)?;
+    let guard = state
+        .connections
+        .lock()
+        .map_err(|_| route_error("connections lock poisoned"))?;
+    let conn = guard
+        .get(conid)
+        .ok_or_else(|| route_error(format!("Unknown connection {conid}")))?;
+    conn.driver
+        .get_version(&conn.handle)
+        .map_err(|e| route_error(e.to_string()))?;
+    Ok(json!({ "status": "ok" }))
+}
+
 /// `database_connections_disconnect` — remove and close a connection.
 pub fn disconnect(state: &DbgmState, args: Value) -> Result<Value, String> {
     let conid = args
@@ -233,7 +278,9 @@ pub fn disconnect(state: &DbgmState, args: Value) -> Result<Value, String> {
         .map_err(|_| route_error("connections lock poisoned"))?
         .remove(conid)
         .ok_or_else(|| route_error(format!("Unknown connection {conid}")))?;
-    conn.driver.close(conn.handle).map_err(|e| route_error(e.to_string()))?;
+    conn.driver
+        .close(conn.handle)
+        .map_err(|e| route_error(e.to_string()))?;
     Ok(json!({ "status": "ok" }))
 }
 
@@ -343,7 +390,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(result["rows"][0]["one"], json!(1));
-        assert!(state.connections.lock().unwrap().contains_key("saved-sqlite"));
+        assert!(state
+            .connections
+            .lock()
+            .unwrap()
+            .contains_key("saved-sqlite"));
     }
 
     #[test]
@@ -407,7 +458,10 @@ mod tests {
         .unwrap();
 
         assert!(result["version"].as_str().is_some());
-        assert!(result["versionText"].as_str().unwrap().starts_with("SQLite"));
+        assert!(result["versionText"]
+            .as_str()
+            .unwrap()
+            .starts_with("SQLite"));
     }
 
     #[test]
@@ -450,11 +504,8 @@ mod tests {
         let state = test_state();
         open_sqlite(&state, "sqlite-bad");
 
-        let err = call_method(
-            &state,
-            json!({"conid": "sqlite-bad", "method": "bogus"}),
-        )
-        .unwrap_err();
+        let err =
+            call_method(&state, json!({"conid": "sqlite-bad", "method": "bogus"})).unwrap_err();
 
         assert!(err.starts_with("DBGM-00000"));
         assert!(err.contains("Unknown method bogus"));
@@ -489,6 +540,56 @@ mod tests {
     }
 
     #[test]
+    fn structure_returns_database_info() {
+        let state = test_state();
+        open_sqlite(&state, "sqlite-structure");
+        run_script(
+            &state,
+            json!({"conid": "sqlite-structure", "sql": "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)"}),
+        )
+        .unwrap();
+
+        let result = crate::routes::dispatch(
+            &state,
+            "database_connections_structure",
+            json!({"conid": "sqlite-structure"}),
+        )
+        .unwrap();
+
+        let tables = result["tables"].as_array().unwrap();
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0]["object"]["pureName"], json!("t"));
+    }
+
+    #[test]
+    fn structure_unknown_conid_errors() {
+        let state = test_state();
+        let err = crate::routes::dispatch(
+            &state,
+            "database_connections_structure",
+            json!({"conid": "nope"}),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("DBGM-00000"));
+        assert!(err.contains("Unknown connection nope"));
+    }
+
+    #[test]
+    fn status_returns_ok_for_open_connection() {
+        let state = test_state();
+        open_sqlite(&state, "sqlite-status");
+
+        let result = crate::routes::dispatch(
+            &state,
+            "database_connections_status",
+            json!({"conid": "sqlite-status"}),
+        )
+        .unwrap();
+
+        assert_eq!(result, json!({ "status": "ok" }));
+    }
+
+    #[test]
     fn disconnect_removes_connection() {
         let state = test_state();
         open_sqlite(&state, "sqlite-disc");
@@ -501,7 +602,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(result, json!({ "status": "ok" }));
-        assert!(!state.connections.lock().unwrap().contains_key("sqlite-disc"));
+        assert!(!state
+            .connections
+            .lock()
+            .unwrap()
+            .contains_key("sqlite-disc"));
     }
 
     #[test]

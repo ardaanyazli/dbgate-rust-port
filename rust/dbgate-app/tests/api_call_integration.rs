@@ -32,8 +32,12 @@ fn plugins_installed_returns_eight_entries() {
 #[test]
 fn plugins_script_returns_js_module_for_sqlite() {
     let state = test_state("plugins-script");
-    let res = dispatch(&state, "plugins_script", json!({ "packageName": "dbgate-plugin-sqlite" }))
-        .unwrap();
+    let res = dispatch(
+        &state,
+        "plugins_script",
+        json!({ "packageName": "dbgate-plugin-sqlite" }),
+    )
+    .unwrap();
     let js = res.as_str().expect("js string");
     assert!(js.starts_with("var plugin = "));
     assert!(js.contains("\"__esModule\": true"));

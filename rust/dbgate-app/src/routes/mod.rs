@@ -20,11 +20,7 @@ pub fn route_error(message: impl Into<String>) -> String {
 }
 
 /// Dispatch a bridge route to its controller handler.
-pub fn dispatch(
-    state: &DbgmState,
-    route: &str,
-    args: Value,
-) -> Result<Value, String> {
+pub fn dispatch(state: &DbgmState, route: &str, args: Value) -> Result<Value, String> {
     match route {
         "apps_get_all_apps" => apps::get_all_apps(state, args),
         "connections_list" => connections::list(state, args),
@@ -42,12 +38,21 @@ pub fn dispatch(
         "database_connections_sql_select" => database_connections::sql_select(state, args),
         "database_connections_run_script" => database_connections::run_script(state, args),
         "database_connections_sync_model" => database_connections::sync_model(state, args),
+        "database_connections_structure" => database_connections::structure(state, args),
+        "database_connections_status" => database_connections::status(state, args),
         "database_connections_refresh" => database_connections::refresh(state, args),
         "database_connections_call_method" => database_connections::call_method(state, args),
         "database_connections_ping" => database_connections::ping(state, args),
         "database_connections_disconnect" => database_connections::disconnect(state, args),
+        "server_connections_refresh" => server_connections::refresh(state, args),
+        "server_connections_list_databases" => server_connections::list_databases(state, args),
+        "jsldata_get_stats" => jsldata::get_stats(state, args),
+        "jsldata_get_rows" => jsldata::get_rows(state, args),
+        "query_history_write" => query_history::write(state, args),
         "sessions_create" => sessions::create(state, args),
         "sessions_execute_reader" => sessions::execute_reader(state, args),
+        "sessions_execute_query" => sessions::execute_query(state, args),
+        "sessions_stop_loading_reader" => sessions::stop_loading_reader(state, args),
         "sessions_set_isolation_level" => sessions::set_isolation_level(state, args),
         "sessions_kill" => sessions::kill(state, args),
         "sessions_ping" => sessions::ping(state, args),
@@ -59,5 +64,8 @@ mod apps;
 mod config;
 mod connections;
 mod database_connections;
+mod jsldata;
 mod plugins;
+mod query_history;
+mod server_connections;
 mod sessions;

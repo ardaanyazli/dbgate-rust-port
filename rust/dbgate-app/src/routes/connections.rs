@@ -41,8 +41,8 @@ impl ConnectionsStore {
             if trimmed.is_empty() {
                 continue;
             }
-            let value: Value =
-                serde_json::from_str(trimmed).map_err(|e| format!("DBGM-00000: Invalid JSON in {}: {e}", self.path.display()))?;
+            let value: Value = serde_json::from_str(trimmed)
+                .map_err(|e| format!("DBGM-00000: Invalid JSON in {}: {e}", self.path.display()))?;
             items.push(value);
         }
         Ok(items)
@@ -50,13 +50,14 @@ impl ConnectionsStore {
 
     fn save(&self, items: &[Value]) -> Result<(), String> {
         if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("DBGM-00000: Cannot create {}: {e}", parent.display()))?;
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("DBGM-00000: Cannot create {}: {e}", parent.display()))?;
         }
-        let mut file =
-            fs::File::create(&self.path).map_err(|e| format!("DBGM-00000: Cannot write {}: {e}", self.path.display()))?;
+        let mut file = fs::File::create(&self.path)
+            .map_err(|e| format!("DBGM-00000: Cannot write {}: {e}", self.path.display()))?;
         for item in items {
-            let line =
-                serde_json::to_string(item).map_err(|e| format!("DBGM-00000: Cannot serialize connection: {e}"))?;
+            let line = serde_json::to_string(item)
+                .map_err(|e| format!("DBGM-00000: Cannot serialize connection: {e}"))?;
             writeln!(file, "{line}").map_err(|e| io_err(&self.path, e))?;
         }
         Ok(())
@@ -87,11 +88,18 @@ impl ConnectionsStore {
         if obj.get("_id").map(Value::is_null).unwrap_or(true) {
             if let Some(id) = obj.get("_id").and_then(Value::as_str) {
                 if self.get(id)?.is_object() && !id.is_empty() {
-                    return Err(format!("DBGM-00000: Cannot insert duplicate ID {id} into {}", self.path.display()));
+                    return Err(format!(
+                        "DBGM-00000: Cannot insert duplicate ID {id} into {}",
+                        self.path.display()
+                    ));
                 }
             }
         }
-        if !obj.get("_id").and_then(Value::as_str).is_some_and(|s| !s.is_empty()) {
+        if !obj
+            .get("_id")
+            .and_then(Value::as_str)
+            .is_some_and(|s| !s.is_empty())
+        {
             obj["_id"] = json!(Self::new_id());
         }
         let mut items = self.load()?;
@@ -105,7 +113,12 @@ impl ConnectionsStore {
         let id = obj
             .get("_id")
             .and_then(Value::as_str)
-            .ok_or_else(|| format!("DBGM-00000: Cannot update connection without _id in {}", self.path.display()))?
+            .ok_or_else(|| {
+                format!(
+                    "DBGM-00000: Cannot update connection without _id in {}",
+                    self.path.display()
+                )
+            })?
             .to_string();
         let mut items = self.load()?;
         let mut replaced = false;
@@ -136,7 +149,12 @@ impl ConnectionsStore {
                 patched = Some(item.clone());
             }
         }
-        let patched = patched.ok_or_else(|| format!("DBGM-00000: Cannot patch unknown connection {id} in {}", self.path.display()))?;
+        let patched = patched.ok_or_else(|| {
+            format!(
+                "DBGM-00000: Cannot patch unknown connection {id} in {}",
+                self.path.display()
+            )
+        })?;
         self.save(&items)?;
         Ok(patched)
     }
@@ -180,7 +198,11 @@ pub fn get(state: &DbgmState, args: Value) -> Result<Value, String> {
 /// `connections_save` — insert (new `_id`) or replace (existing `_id`).
 pub fn save(state: &DbgmState, args: Value) -> Result<Value, String> {
     let store = ConnectionsStore::new(ConnectionsStore::default_path(state));
-    if args.get("_id").and_then(Value::as_str).is_some_and(|s| !s.is_empty()) {
+    if args
+        .get("_id")
+        .and_then(Value::as_str)
+        .is_some_and(|s| !s.is_empty())
+    {
         store.update(&args)
     } else {
         store.insert(args)
@@ -229,7 +251,10 @@ pub fn update_database(state: &DbgmState, args: Value) -> Result<Value, String> 
             }
         }
     }
-    if let Some(existing) = databases.iter_mut().find(|d| d.get("name").and_then(Value::as_str) == Some(database)) {
+    if let Some(existing) = databases
+        .iter_mut()
+        .find(|d| d.get("name").and_then(Value::as_str) == Some(database))
+    {
         *existing = entry;
     } else {
         databases.push(entry);
