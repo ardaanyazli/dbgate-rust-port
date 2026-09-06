@@ -30,6 +30,44 @@ fn plugins_installed_returns_eight_entries() {
 }
 
 #[test]
+fn plugins_script_returns_js_module_for_sqlite() {
+    let state = test_state("plugins-script");
+    let res = dispatch(&state, "plugins_script", json!({ "packageName": "dbgate-plugin-sqlite" }))
+        .unwrap();
+    let js = res.as_str().expect("js string");
+    assert!(js.starts_with("var plugin = "));
+    assert!(js.contains("\"__esModule\": true"));
+    assert!(js.contains("\"drivers\": ["));
+    assert!(js.contains("engine: \"sqlite@dbgate-plugin-sqlite\""));
+    assert!(js.contains("showConnectionField"));
+    assert!(js.contains("beforeConnectionSave"));
+}
+
+#[test]
+fn plugins_script_returns_empty_module_for_unknown_package() {
+    let state = test_state("plugins-script-unknown");
+    let res = dispatch(
+        &state,
+        "plugins_script",
+        json!({ "packageName": "dbgate-plugin-does-not-exist" }),
+    )
+    .unwrap();
+    let js = res.as_str().expect("js string");
+    assert!(js.starts_with("var plugin = "));
+    assert!(js.contains("\"__esModule\": true"));
+    assert!(js.contains("\"drivers\": ["));
+    // no engine produced any driver object
+    assert!(!js.contains("showConnectionField"));
+}
+
+#[test]
+fn apps_get_all_apps_returns_empty_array() {
+    let state = test_state("apps");
+    let res = dispatch(&state, "apps_get_all_apps", json!({})).unwrap();
+    assert_eq!(res, Value::Array(vec![]));
+}
+
+#[test]
 fn config_get_returns_config_object() {
     let state = test_state("config");
     let res = dispatch(&state, "config_get", json!({})).unwrap();

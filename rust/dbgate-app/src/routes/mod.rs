@@ -26,6 +26,7 @@ pub fn dispatch(
     args: Value,
 ) -> Result<Value, String> {
     match route {
+        "apps_get_all_apps" => apps::get_all_apps(state, args),
         "connections_list" => connections::list(state, args),
         "connections_get" => connections::get(state, args),
         "connections_save" => connections::save(state, args),
@@ -37,6 +38,7 @@ pub fn dispatch(
         "config_update_settings" => config::update_settings(state, args),
         "config_platform_info" => config::platform_info(state, args),
         "plugins_installed" => plugins::installed(state, args),
+        "plugins_script" => plugins::script(state, args),
         "database_connections_sql_select" => database_connections::sql_select(state, args),
         "database_connections_run_script" => database_connections::run_script(state, args),
         "database_connections_sync_model" => database_connections::sync_model(state, args),
@@ -53,6 +55,7 @@ pub fn dispatch(
     }
 }
 
+mod apps;
 mod config;
 mod connections;
 mod database_connections;

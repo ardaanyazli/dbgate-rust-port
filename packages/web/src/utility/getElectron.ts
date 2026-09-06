@@ -47,7 +47,17 @@ class TauriApi {
 
   async invoke<T = any>(route: string, args?: any): Promise<T> {
     const { invoke } = await import('@tauri-apps/api/core');
-    return invoke(route.replace(/-/g, '_'), args ?? {});
+    try {
+      return await invoke(route.replace(/-/g, '_'), args ?? {});
+    } catch (err) {
+      // Out-of-scope routes reject here; resolve with an errorMessage
+      // envelope so errorValue loaders degrade to their designed fallback.
+      const message = typeof err === 'string' ? err : err?.message ?? String(err);
+      if (typeof message === 'string' && message.includes('Route not implemented')) {
+        return { errorMessage: message } as T;
+      }
+      throw err;
+    }
   }
 
   async send(msg: string, args: any = null) {
