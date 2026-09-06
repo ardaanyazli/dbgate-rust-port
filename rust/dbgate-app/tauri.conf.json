@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "org.dbgate",
   "build": {
-    "beforeDevCommand": "yarn --cwd ../../packages/web dev",
+    "beforeDevCommand": "yarn workspace dbgate-web dev",
     "devUrl": "http://localhost:5001",
     "beforeBuildCommand": "yarn --cwd ../../packages/web build",
     "frontendDist": "../../packages/web/public"

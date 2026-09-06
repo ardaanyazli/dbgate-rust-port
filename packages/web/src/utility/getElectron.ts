@@ -48,7 +48,7 @@ class TauriApi {
   async invoke<T = any>(route: string, args?: any): Promise<T> {
     const { invoke } = await import('@tauri-apps/api/core');
     try {
-      return await invoke(route.replace(/-/g, '_'), args ?? {});
+      return await invoke('api_call', { route: route.replace(/-/g, '_'), args: args ?? {} });
     } catch (err) {
       // Out-of-scope routes reject here; resolve with an errorMessage
       // envelope so errorValue loaders degrade to their designed fallback.
