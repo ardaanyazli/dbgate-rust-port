@@ -36,3 +36,4 @@ packages/web/public/*.html
 e2e-tests/screenshots/*.png
 my_guitar_shop.db
 .aider*
+/.omo
