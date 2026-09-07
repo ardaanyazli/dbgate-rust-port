@@ -2,8 +2,8 @@
 //! (`packages/api/src/controllers/plugins.js`).
 //!
 //! Two routes are in scope for this port:
-//! - `plugins_installed` — engine metadata derived from the registered
-//!   drivers, consumed by `useInstalledPlugins` in the frontend.
+//! - `plugins_installed` — plugin package metadata, one row per package,
+//!   consumed by `useInstalledPlugins` in the frontend.
 //! - `plugins_script` — a generated JavaScript module for one plugin
 //!   package. The frontend evals the module (`PluginsProvider.svelte`,
 //!   `eval(\`${resp}; plugin\`)`) to build `$extensions.drivers`, so the
@@ -14,11 +14,30 @@ use serde_json::{json, Value};
 
 use crate::DbgmState;
 
-/// `plugins_installed` — list installed engines as plugin metadata entries.
+/// `plugins_installed` — list installed plugin packages.
+///
+/// One metadata row per package name, mirroring the Node controller which
+/// unions the installed package directories. The frontend keys its plugin
+/// loading loop on `installed.name` (fetching `plugins_script` once per row)
+/// and later maps every installed row to the loaded script module:
+///
+/// ```js
+/// plugins = $installedPlugins.map(m => ({ packageName: m.name, content: pluginsDict[m.name] }));
+/// $extensions.drivers = plugins.flatMap(p => p.content.drivers);
+/// ```
+///
+/// Emitting one row per *engine* instead would register shared-package engines
+/// twice — e.g. the mysql package contributes both `mysql@` and `mariadb@`
+/// engines, so two rows would attach the same two drivers twice, producing
+/// duplicate keys in the Svelte keyed-each blocks of the engine dropdown and
+/// crashing the app.
 pub fn installed(state: &DbgmState, _args: Value) -> Result<Value, String> {
-    let metadata = state.drivers.list_metadata();
-    let entries = metadata
+    let mut seen = std::collections::HashSet::new();
+    let entries = state
+        .drivers
+        .list_metadata()
         .into_iter()
+        .filter(|m| seen.insert(m.name.clone()))
         .map(|m| {
             json!({
                 "name": m.name,
@@ -196,33 +215,32 @@ mod tests {
     }
 
     #[test]
-    fn installed_returns_engine_metadata() {
+    fn installed_returns_one_row_per_package() {
         let state = test_state();
         let res = installed(&state, json!({})).unwrap();
         let arr = res.as_array().expect("array");
-        assert_eq!(arr.len(), 8);
+        // one row per package: the shared mysql package (mysql + mariadb
+        // engines) must not produce two rows, or the frontend would attach
+        // the same two drivers twice and crash the engine dropdown keyed-each
+        assert_eq!(arr.len(), 7);
+
+        let mut names: Vec<&str> = arr.iter().map(|e| e["name"].as_str().unwrap()).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), 7);
 
         let mysql = arr
             .iter()
-            .find(|e| e["engine"] == "mysql@dbgate-plugin-mysql")
-            .expect("mysql entry");
-        assert_eq!(mysql["name"], "dbgate-plugin-mysql");
-        assert_eq!(mysql["displayName"], "MySQL");
+            .find(|e| e["name"] == "dbgate-plugin-mysql")
+            .expect("mysql package entry");
         assert_eq!(mysql["defaultPort"], 3306);
-        assert_eq!(mysql["databaseEngine"], "mysql");
         assert!(mysql["icons"].is_object());
-
-        let mariadb = arr
-            .iter()
-            .find(|e| e["engine"] == "mariadb@dbgate-plugin-mysql")
-            .expect("mariadb entry");
-        assert_eq!(mariadb["name"], "dbgate-plugin-mysql");
-        assert_eq!(mariadb["databaseEngine"], "mariadb");
 
         let sqlite = arr
             .iter()
-            .find(|e| e["engine"] == "sqlite@dbgate-plugin-sqlite")
+            .find(|e| e["name"] == "dbgate-plugin-sqlite")
             .expect("sqlite entry");
+        assert_eq!(sqlite["engine"], "sqlite@dbgate-plugin-sqlite");
         assert_eq!(sqlite["defaultPort"], Value::Null);
     }
 
@@ -230,7 +248,7 @@ mod tests {
     fn plugins_installed_route_dispatches() {
         let state = test_state();
         let res = dispatch(&state, "plugins_installed", json!({})).unwrap();
-        assert_eq!(res.as_array().expect("array").len(), 8);
+        assert_eq!(res.as_array().expect("array").len(), 7);
     }
 
     #[test]

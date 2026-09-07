@@ -33,6 +33,7 @@ pub fn dispatch(state: &DbgmState, route: &str, args: Value) -> Result<Value, St
         "config_get_settings" => config::get_settings(state, args),
         "config_update_settings" => config::update_settings(state, args),
         "config_platform_info" => config::platform_info(state, args),
+        "files_favorites" => files::favorites(state, args),
         "plugins_installed" => plugins::installed(state, args),
         "plugins_script" => plugins::script(state, args),
         "database_connections_sql_select" => database_connections::sql_select(state, args),
@@ -64,6 +65,7 @@ mod apps;
 mod config;
 mod connections;
 mod database_connections;
+mod files;
 mod jsldata;
 mod plugins;
 mod query_history;

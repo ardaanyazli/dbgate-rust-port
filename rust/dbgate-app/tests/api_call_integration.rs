@@ -22,11 +22,20 @@ fn connections_list_returns_empty_array_fresh() {
 }
 
 #[test]
-fn plugins_installed_returns_eight_entries() {
+fn plugins_installed_returns_one_row_per_package() {
     let state = test_state("plugins");
     let res = dispatch(&state, "plugins_installed", json!({})).unwrap();
     let arr = res.as_array().expect("array");
-    assert_eq!(arr.len(), 8);
+    // one row per uniquely named package; the mysql package (mysql + mariadb
+    // engines) must not be listed twice, or the frontend eval-loop would
+    // register both drivers twice and crash the engine dropdown keyed-each
+    assert_eq!(arr.len(), 7);
+
+    let mut names: Vec<&str> = arr.iter().map(|e| e["name"].as_str().unwrap()).collect();
+    names.sort();
+    names.dedup();
+    assert_eq!(names.len(), 7);
+    assert!(names.contains(&"dbgate-plugin-mysql"));
 }
 
 #[test]
@@ -68,6 +77,15 @@ fn plugins_script_returns_empty_module_for_unknown_package() {
 fn apps_get_all_apps_returns_empty_array() {
     let state = test_state("apps");
     let res = dispatch(&state, "apps_get_all_apps", json!({})).unwrap();
+    assert_eq!(res, Value::Array(vec![]));
+}
+
+#[test]
+fn files_favorites_returns_empty_array() {
+    let state = test_state("files");
+    let res = dispatch(&state, "files_favorites", json!({})).unwrap();
+    // must be an array so `OpenTabsOnStartup.svelte` can call list.filter;
+    // an errorMessage object would throw "list.filter is not a function"
     assert_eq!(res, Value::Array(vec![]));
 }
 
