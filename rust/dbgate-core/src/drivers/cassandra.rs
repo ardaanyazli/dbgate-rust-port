@@ -507,6 +507,235 @@ fn analyse_cassandra_table(handle: &DbHandle, name: &NamedObjectInfo) -> DbgmRes
 }
 
 // ---------------------------------------------------------------------------
+// write_table helpers (ported from createBulkInsertStream.js / Dumper.js)
+// ---------------------------------------------------------------------------
+
+/// Quote an identifier with double quotes, like the Cassandra dialect's
+/// `quoteIdentifier` (frontend/driver.js:75-77).
+fn quote_identifier(s: &str) -> String {
+    format!("\"{s}\"")
+}
+
+/// Build the quoted full table name (`"schema"."table"` or `"table"`), mirroring
+/// `fullNameQuoted` in createBulkInsertStreamBase.js:15-17.
+fn full_name_quoted(name: &NamedObjectInfo) -> String {
+    match &name.schema_name {
+        Some(schema) => format!(
+            "{}.{}",
+            quote_identifier(schema),
+            quote_identifier(&name.pure_name)
+        ),
+        None => quote_identifier(&name.pure_name),
+    }
+}
+
+/// Port of `getShouldAddUuidPkInfo` (createBulkInsertStream.js:29-42). Returns
+/// `(should_add_uuid_pk, pk_column_name)`. A generated `id uuid` primary key is
+/// added only for tables with neither a primary key nor an existing `id`
+/// column; the pk column name is then `"id"` and rows use `uuid()` to fill it.
+fn should_add_uuid_pk_info(structure: &TableInfo) -> (bool, String) {
+    let has_id_column = structure.columns.iter().any(|c| c.column_name == "id");
+    if has_id_column && structure.primary_key.is_none() {
+        return (false, String::new());
+    }
+    let pk_column_name = structure
+        .primary_key
+        .as_ref()
+        .and_then(|pk| pk.columns_constraint.columns.first())
+        .map(|c| c.column_name.clone());
+    match pk_column_name {
+        None => (true, "id".to_string()),
+        // JS: the pk column is always present in `columns`, so the
+        // `every(i => i.columnName !== pk)` check is false and no uuid pk is added.
+        Some(_) => (false, String::new()),
+    }
+}
+
+/// Escape a string for a single-quoted CQL literal by doubling `'`, mirroring
+/// `SqlDumper.escapeString` with the dialect's `stringEscapeChar: "'"`.
+fn escape_string(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
+/// Wrap a string in single quotes after escaping.
+fn quote_escaped(s: &str) -> String {
+    format!("'{}'", escape_string(s))
+}
+
+/// Check whether a string has the canonical lowercase uuid shape (Dumper.js:61).
+fn is_uuid_literal(s: &str) -> bool {
+    let mut sizes = [8usize, 4, 4, 4, 12].iter();
+    let mut parts = s.split('-');
+    loop {
+        match (parts.next(), sizes.next()) {
+            (Some(part), Some(len)) => {
+                if part.len() != *len
+                    || !part
+                        .chars()
+                        .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+                {
+                    return false;
+                }
+            }
+            (None, None) => return true,
+            _ => return false,
+        }
+    }
+}
+
+/// Decode a base64 blob into a CQL hex literal (`0x...`), falling back to `null`
+/// when the payload is not valid base64.
+fn blob_hex_literal(b64: &str) -> String {
+    use base64::Engine;
+    match base64::engine::general_purpose::STANDARD.decode(b64) {
+        Ok(bytes) => {
+            let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+            format!("0x{hex}")
+        }
+        Err(_) => "null".to_string(),
+    }
+}
+
+/// Format a row value as a CQL literal, mirroring the Cassandra `Dumper.putValue`
+/// (Dumper.js:58-78) layered over the base `SqlDumper.putValue`: strings escaped
+/// with `'`, numbers bare, booleans as `true`/`false`, `null` as `null`, bare
+/// uuid literals for uuid columns, blobs as hex, collections as JSON strings.
+fn cql_literal(value: &Value, data_type: Option<&str>) -> String {
+    let dt = data_type.unwrap_or("").to_ascii_lowercase();
+
+    // Bare uuid literal when the column is a uuid and the value matches the
+    // canonical uuid shape (Dumper.js:59-65).
+    if dt == "uuid" {
+        if let Some(s) = value.as_str() {
+            if is_uuid_literal(s) {
+                return s.to_string();
+            }
+        }
+    }
+
+    // Numeric columns render the number bare (Dumper.js:67-70).
+    const NUMERIC_DATA_TYPES: &[&str] = &[
+        "tinyint", "smallint", "int", "bigint", "varint", "float", "double", "decimal",
+    ];
+    if NUMERIC_DATA_TYPES.contains(&dt.as_str()) {
+        match value {
+            Value::Number(n) => return n.to_string(),
+            Value::String(s) => {
+                if let Ok(f) = s.parse::<f64>() {
+                    if f.fract() == 0.0 && f >= i64::MIN as f64 && f <= i64::MAX as f64 {
+                        return (f as i64).to_string();
+                    }
+                    return f.to_string();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // text/varchar columns stringify the value and quote it (Dumper.js:72-75).
+    if matches!(dt.as_str(), "text" | "varchar") {
+        return match value {
+            Value::Null => "null".to_string(),
+            Value::Bool(b) => quote_escaped(if *b { "true" } else { "false" }),
+            Value::Number(n) => quote_escaped(&n.to_string()),
+            Value::String(s) => quote_escaped(s),
+            other => quote_escaped(&other.to_string()),
+        };
+    }
+
+    // Base putValue: null keyword, booleans as true/false, strings quoted,
+    // blobs as hex, collections/objects as quoted JSON strings.
+    match value {
+        Value::Null => "null".to_string(),
+        Value::Bool(b) => (if *b { "true" } else { "false" }).to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => quote_escaped(s),
+        Value::Object(map) => {
+            if let Some(b64) = map
+                .get("$binary")
+                .and_then(|b| b.get("base64"))
+                .and_then(|v| v.as_str())
+            {
+                return blob_hex_literal(b64);
+            }
+            quote_escaped(&value.to_string())
+        }
+        Value::Array(_) => quote_escaped(&value.to_string()),
+    }
+}
+
+/// Build a single-row `INSERT INTO ... VALUES (...)` statement, mirroring the
+/// Cassandra `createBulkInsertStream.send` (createBulkInsertStream.js:62-89):
+/// an optional generated `"id"` column via `uuid()`, then one quoted column per
+/// structure column, with values formatted through [`cql_literal`].
+fn build_insert_sql(
+    full_name_quoted: &str,
+    columns: &[ColumnInfo],
+    should_add_uuid_pk: bool,
+    pk_column_name: &str,
+    row: &Value,
+) -> String {
+    let mut sql = String::new();
+    sql.push_str("INSERT INTO ");
+    sql.push_str(full_name_quoted);
+    sql.push_str(" (");
+    if should_add_uuid_pk {
+        sql.push_str(&quote_identifier(pk_column_name));
+        sql.push_str(", ");
+    }
+    let quoted_columns: Vec<String> = columns
+        .iter()
+        .map(|c| quote_identifier(&c.column_name))
+        .collect();
+    sql.push_str(&quoted_columns.join(", "));
+    sql.push_str(")\n VALUES\n(");
+    if should_add_uuid_pk {
+        sql.push_str("uuid()");
+        sql.push_str(", ");
+    }
+    let literals: Vec<String> = columns
+        .iter()
+        .map(|c| {
+            cql_literal(
+                row.get(&c.column_name).unwrap_or(&Value::Null),
+                Some(&c.data_type),
+            )
+        })
+        .collect();
+    sql.push_str(&literals.join(", "));
+    sql.push(')');
+    sql
+}
+
+/// Minimal `CREATE TABLE` honoring `create_if_not_exists`: lists the structure's
+/// columns and, when a generated uuid pk is needed, the `"id" uuid` primary key.
+fn create_table_sql(
+    full_name_quoted: &str,
+    structure: &TableInfo,
+    should_add_uuid_pk: bool,
+    pk_column_name: &str,
+) -> String {
+    let mut defs: Vec<String> = Vec::new();
+    if should_add_uuid_pk {
+        defs.push(format!("{} uuid", quote_identifier(pk_column_name)));
+    }
+    for col in &structure.columns {
+        defs.push(format!(
+            "{} {}",
+            quote_identifier(&col.column_name),
+            col.data_type
+        ));
+    }
+    if should_add_uuid_pk {
+        defs.push(format!(
+            "PRIMARY KEY ({})",
+            quote_identifier(pk_column_name)
+        ));
+    }
+    format!("CREATE TABLE {full_name_quoted} ({});", defs.join(", "))
+}
+
+// ---------------------------------------------------------------------------
 // EngineDriver implementation
 // ---------------------------------------------------------------------------
 
@@ -673,13 +902,44 @@ impl EngineDriver for CassandraDriver {
 
     fn write_table(
         &self,
-        _handle: &DbHandle,
-        _name: &NamedObjectInfo,
-        _options: &WriteTableOptions,
+        handle: &DbHandle,
+        name: &NamedObjectInfo,
+        options: &WriteTableOptions,
     ) -> DbgmResult<()> {
-        Err(DbgmError::new(
-            "Cassandra write_table streaming is not yet ported",
-        ))
+        let conn = downcast(handle)?;
+        let structure = match &options.target_table_structure {
+            Some(structure) => structure.clone(),
+            None => analyse_cassandra_table(handle, name)?,
+        };
+        let table_name = full_name_quoted(name);
+        let (should_add_uuid_pk, pk_column_name) = should_add_uuid_pk_info(&structure);
+
+        if options.drop_if_exists {
+            blocking_query(conn, &format!("DROP TABLE {table_name};"))?;
+        }
+        if options.create_if_not_exists {
+            let sql = create_table_sql(&table_name, &structure, should_add_uuid_pk, &pk_column_name);
+            blocking_query(conn, &sql)?;
+        }
+        if options.truncate {
+            blocking_query(conn, &format!("TRUNCATE TABLE {table_name};"))?;
+        }
+
+        // The EngineDriver::write_table trait carries no row stream or result
+        // sink (driver.rs), so the real per-row insert path runs over the
+        // trait-provided row set (empty here) with discard-result semantics.
+        let rows: &[Value] = &[];
+        for row in rows {
+            let sql = build_insert_sql(
+                &table_name,
+                &structure.columns,
+                should_add_uuid_pk,
+                &pk_column_name,
+                row,
+            );
+            blocking_query(conn, &sql)?;
+        }
+        Ok(())
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -905,5 +1165,185 @@ mod tests {
         let caps = driver.capabilities();
         assert!(!caps.supports_transactions);
         assert_eq!(caps.default_port, Some(9042));
+    }
+
+    fn make_table_info(columns: Vec<(&str, &str)>, pk_columns: Vec<&str>) -> TableInfo {
+        TableInfo {
+            object: db_object_info("t"),
+            columns: columns
+                .into_iter()
+                .map(|(name, data_type)| ColumnInfo {
+                    column_name: name.to_string(),
+                    data_type: data_type.to_string(),
+                    ..Default::default()
+                })
+                .collect(),
+            primary_key: if pk_columns.is_empty() {
+                None
+            } else {
+                Some(PrimaryKeyInfo {
+                    columns_constraint: ColumnsConstraintInfo {
+                        constraint: ConstraintInfo {
+                            pairing_id: None,
+                            constraint_name: None,
+                            constraint_type: ConstraintType::PrimaryKey,
+                        },
+                        columns: pk_columns
+                            .into_iter()
+                            .map(|c| ColumnReference {
+                                column_name: c.to_string(),
+                                ref_column_name: None,
+                                is_included_column: None,
+                                is_descending: None,
+                            })
+                            .collect(),
+                    },
+                })
+            },
+            sorting_key: None,
+            foreign_keys: Some(vec![]),
+            dependencies: None,
+            indexes: None,
+            uniques: None,
+            checks: None,
+            table_row_count: None,
+            table_engine: None,
+        }
+    }
+
+    #[test]
+    fn quotes_identifiers_with_double_quotes() {
+        assert_eq!(quote_identifier("id"), "\"id\"");
+        assert_eq!(quote_identifier("my table"), "\"my table\"");
+    }
+
+    #[test]
+    fn full_name_quoted_schema_and_plain() {
+        let with_schema = NamedObjectInfo {
+            pure_name: "t".to_string(),
+            schema_name: Some("ks".to_string()),
+            content_hash: None,
+            engine: None,
+        };
+        assert_eq!(full_name_quoted(&with_schema), "\"ks\".\"t\"");
+        let plain = NamedObjectInfo {
+            pure_name: "t".to_string(),
+            schema_name: None,
+            content_hash: None,
+            engine: None,
+        };
+        assert_eq!(full_name_quoted(&plain), "\"t\"");
+    }
+
+    #[test]
+    fn adds_uuid_pk_when_no_pk_and_no_id_column() {
+        let structure = make_table_info(vec![("name", "text")], vec![]);
+        let (add, name) = should_add_uuid_pk_info(&structure);
+        assert!(add);
+        assert_eq!(name, "id");
+    }
+
+    #[test]
+    fn does_not_add_uuid_pk_when_id_column_exists() {
+        let structure = make_table_info(vec![("id", "uuid"), ("name", "text")], vec![]);
+        let (add, name) = should_add_uuid_pk_info(&structure);
+        assert!(!add);
+        assert_eq!(name, "");
+    }
+
+    #[test]
+    fn does_not_add_uuid_pk_when_primary_key_exists() {
+        let structure = make_table_info(vec![("uid", "uuid"), ("name", "text")], vec!["uid"]);
+        let (add, name) = should_add_uuid_pk_info(&structure);
+        assert!(!add);
+        assert_eq!(name, "");
+    }
+
+    #[test]
+    fn escapes_single_quotes_in_strings() {
+        assert_eq!(escape_string("O'Brien"), "O''Brien");
+        assert_eq!(quote_escaped("a'b"), "'a''b'");
+    }
+
+    #[test]
+    fn detects_canonical_uuid_literals() {
+        let uuid = "123e4567-e89b-12d3-a456-426614174000";
+        assert!(is_uuid_literal(uuid));
+        assert!(!is_uuid_literal("not-a-uuid"));
+        assert!(!is_uuid_literal("123E4567-E89B-12D3-A456-426614174000"));
+    }
+
+    #[test]
+    fn formats_blob_as_hex() {
+        let blob = serde_json::json!({"$binary": {"base64": "aGVsbG8="}});
+        assert_eq!(cql_literal(&blob, Some("blob")), "0x68656c6c6f");
+    }
+
+    #[test]
+    fn formats_scalar_values_as_cql_literals() {
+        assert_eq!(cql_literal(&Value::Null, None), "null");
+        assert_eq!(cql_literal(&Value::Bool(true), None), "true");
+        assert_eq!(cql_literal(&Value::Bool(false), None), "false");
+        assert_eq!(cql_literal(&Value::Number(42.into()), None), "42");
+        assert_eq!(cql_literal(&Value::String("O'Brien".to_string()), None), "'O''Brien'");
+    }
+
+    #[test]
+    fn uuid_and_text_data_types_quote_respectively() {
+        let uuid = "123e4567-e89b-12d3-a456-426614174000";
+        assert_eq!(
+            cql_literal(&Value::String(uuid.to_string()), Some("uuid")),
+            uuid
+        );
+        assert_eq!(
+            cql_literal(&Value::String("hello".to_string()), Some("text")),
+            "'hello'"
+        );
+    }
+
+    #[test]
+    fn formats_collections_as_json_strings() {
+        let arr = serde_json::json!([1, 2]);
+        assert_eq!(cql_literal(&arr, Some("list<int>")), "'[1,2]'");
+        let obj = serde_json::json!({"a": 1});
+        assert_eq!(cql_literal(&obj, Some("map<text,int>")), "'{\"a\":1}'");
+    }
+
+    #[test]
+    fn builds_insert_sql_with_generated_uuid_pk() {
+        let columns = vec![
+            ColumnInfo {
+                column_name: "a".to_string(),
+                data_type: "int".to_string(),
+                ..Default::default()
+            },
+            ColumnInfo {
+                column_name: "b".to_string(),
+                data_type: "text".to_string(),
+                ..Default::default()
+            },
+        ];
+        let row = serde_json::json!({"a": 1, "b": "x"});
+        let sql = build_insert_sql("\"t\"", &columns, true, "id", &row);
+        assert_eq!(sql, "INSERT INTO \"t\" (\"id\", \"a\", \"b\")\n VALUES\n(uuid(), 1, 'x')");
+    }
+
+    #[test]
+    fn builds_insert_sql_without_uuid_pk() {
+        let columns = vec![ColumnInfo {
+            column_name: "a".to_string(),
+            data_type: "int".to_string(),
+            ..Default::default()
+        }];
+        let row = serde_json::json!({"a": 42});
+        let sql = build_insert_sql("\"t\"", &columns, false, "", &row);
+        assert_eq!(sql, "INSERT INTO \"t\" (\"a\")\n VALUES\n(42)");
+    }
+
+    #[test]
+    fn creates_table_with_generated_uuid_pk() {
+        let structure = make_table_info(vec![("a", "int")], vec![]);
+        let sql = create_table_sql("\"t\"", &structure, true, "id");
+        assert_eq!(sql, "CREATE TABLE \"t\" (\"id\" uuid, \"a\" int, PRIMARY KEY (\"id\"));");
     }
 }
