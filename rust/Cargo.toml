@@ -28,6 +28,7 @@ mysql_async = "0.37"
 clickhouse = { version = "0.13", features = ["rustls-tls"] }
 oracledb = "26.0.0-beta.2"
 rsfbclient = { version = "0.28", default-features = false, features = ["pure_rust"] }
+scylla = { version = "1.8.0", features = ["chrono-04", "num-bigint-04", "rustls-023"] }
 
 # ---- logging ----
 tracing = "0.1"

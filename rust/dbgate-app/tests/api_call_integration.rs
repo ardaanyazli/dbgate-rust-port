@@ -29,12 +29,12 @@ fn plugins_installed_returns_one_row_per_package() {
     // one row per uniquely named package; the mysql package (mysql + mariadb
     // engines) must not be listed twice, or the frontend eval-loop would
     // register both drivers twice and crash the engine dropdown keyed-each
-    assert_eq!(arr.len(), 7);
+    assert_eq!(arr.len(), 8);
 
     let mut names: Vec<&str> = arr.iter().map(|e| e["name"].as_str().unwrap()).collect();
     names.sort();
     names.dedup();
-    assert_eq!(names.len(), 7);
+    assert_eq!(names.len(), 8);
     assert!(names.contains(&"dbgate-plugin-mysql"));
 }
 

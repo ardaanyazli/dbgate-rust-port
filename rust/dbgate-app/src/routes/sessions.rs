@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
-use dbgate_core::driver::{DbHandle, EngineDriver, StreamInfo, StreamSeverity, StreamSink};
+use dbgate_core::driver::{DbHandle, EngineDriver, StreamSeverity, StreamSink};
 
 use super::database_connections::{ensure_connected, load_definition};
 use super::route_error;

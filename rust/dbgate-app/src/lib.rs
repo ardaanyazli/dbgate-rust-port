@@ -39,6 +39,7 @@ type EventSink = Arc<dyn Fn(&str, Value) + Send + Sync>;
 /// A query session: its metadata plus the session-scoped connection,
 /// mirroring the Electron model where every session owns a dedicated
 /// connection (a forked subprocess in the JS implementation).
+#[allow(dead_code)]
 struct Session {
     sesid: String,
     conid: String,
@@ -82,6 +83,7 @@ impl DbgmState {
         drivers.register(dbgate_core::drivers::clickhouse::driver_ref());
         drivers.register(dbgate_core::drivers::oracle::driver_ref());
         drivers.register(dbgate_core::drivers::firebird::driver_ref());
+        drivers.register(dbgate_core::drivers::cassandra::driver_ref());
         Self {
             drivers,
             connections: Mutex::new(HashMap::new()),

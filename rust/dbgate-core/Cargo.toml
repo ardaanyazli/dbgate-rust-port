@@ -24,3 +24,4 @@ mysql_async.workspace = true
 clickhouse.workspace = true
 oracledb.workspace = true
 rsfbclient.workspace = true
+scylla.workspace = true

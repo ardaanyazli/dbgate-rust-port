@@ -47,7 +47,7 @@ thread-safe `DbHandle`, and mapping driver rows to the DbGate JSON value model.
 | 8 | SQLite | dbgate-plugin-sqlite | `rusqlite` | ✅ **DONE** (reference). |
 | 9 | DuckDB | dbgate-plugin-duckdb | `duckdb` | QL / arrow. |
 | 10 | ClickHouse | dbgate-plugin-clickhouse | `clickhouse` | HTTP/TCK. |
-| 11 | Cassandra | dbgate-plugin-cassandra | `scylla` | CQL, not SQL. |
+| 11 | Cassandra | dbgate-plugin-cassandra | `scylla` | ✅ **DONE** — CQL native protocol via scylla 1.8.0. |
 | 12 | Firebird | dbgate-plugin-firebird | `rsfbclient` | ✅ **DONE** — `pure_rust`, blocking `&mut self` → `Mutex<SimpleConnection>`. |
 | 13 | CockroachDB | (postgres plugin) | `postgres` | Postgres wire + cluster queries. |
 | 14 | Redshift (Premium) | dbgate-plugin-postgres | `postgres` | Postgres wire. |
@@ -88,6 +88,7 @@ After the drivers, the remaining Node backend modules need Rust equivalents:
    → ClickHouse → Oracle → Firebird. Each is the same `EngineDriver` shape;
    only the catalog queries and value mapping differ.
 4. **Milestone 4 — Non-SQL engines**: MongoDB → Redis → Cassandra.
+   Cassandra driver **done** (scylla 1.8.0).
 5. **Milestone 5 — Cross-cutting**: sqlparser integration, SSH tunnels,
    dump/restore, config/auth.
 6. **Milestone 6 — Web mode**: axum HTTP server for the browser/Docker target.

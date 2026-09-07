@@ -4,6 +4,7 @@
 //! Rust database crate. New drivers are added one database at a time;
 //! `sqlite` is the reference implementation every other driver follows.
 
+pub mod cassandra;
 pub mod clickhouse;
 pub mod firebird;
 pub mod mssql;

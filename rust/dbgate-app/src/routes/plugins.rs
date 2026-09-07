@@ -222,12 +222,12 @@ mod tests {
         // one row per package: the shared mysql package (mysql + mariadb
         // engines) must not produce two rows, or the frontend would attach
         // the same two drivers twice and crash the engine dropdown keyed-each
-        assert_eq!(arr.len(), 7);
+        assert_eq!(arr.len(), 8);
 
         let mut names: Vec<&str> = arr.iter().map(|e| e["name"].as_str().unwrap()).collect();
         names.sort();
         names.dedup();
-        assert_eq!(names.len(), 7);
+        assert_eq!(names.len(), 8);
 
         let mysql = arr
             .iter()
@@ -248,7 +248,7 @@ mod tests {
     fn plugins_installed_route_dispatches() {
         let state = test_state();
         let res = dispatch(&state, "plugins_installed", json!({})).unwrap();
-        assert_eq!(res.as_array().expect("array").len(), 7);
+        assert_eq!(res.as_array().expect("array").len(), 8);
     }
 
     #[test]
