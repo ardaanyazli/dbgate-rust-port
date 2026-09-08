@@ -41,6 +41,7 @@ use crate::driver::{
 };
 use crate::error::{DbgmError, DbgmResult};
 use crate::query::{QueryResult, QueryResultColumn};
+use crate::ssh_tunnel::SshTunnel;
 
 /// Dotted engine id for Firebird.
 pub const FIREBIRD_ENGINE: &str = "firebird@dbgate-plugin-firebird";
@@ -52,6 +53,8 @@ pub const FIREBIRD_ENGINE: &str = "firebird@dbgate-plugin-firebird";
 struct FirebirdConnection {
     conn: Mutex<SimpleConnection>,
     database: String,
+    #[allow(dead_code)]
+    ssh_tunnel: Option<SshTunnel>,
 }
 
 /// The Firebird driver.
@@ -92,9 +95,7 @@ fn lock(conn: &FirebirdConnection) -> DbgmResult<std::sync::MutexGuard<'_, Simpl
 /// Build an `rsfbclient` connection from a definition. The Firebird plugin maps
 /// its connection fields onto `node-firebird` options: `server` -> host,
 /// `port`, `user`, `password`, `databaseFile` -> database path.
-fn build_connection(def: &ConnectionDefinition) -> DbgmResult<SimpleConnection> {
-    let server = def.server.clone().unwrap_or_else(|| "localhost".to_string());
-    let port = def.port.unwrap_or(3050) as u16;
+fn build_connection(def: &ConnectionDefinition, host: &str, port: u16) -> DbgmResult<SimpleConnection> {
     let user = def.user.clone().unwrap_or_else(|| "SYSDBA".to_string());
     let pass = def.password.clone().unwrap_or_else(|| "masterkey".to_string());
     let database = def
@@ -104,7 +105,7 @@ fn build_connection(def: &ConnectionDefinition) -> DbgmResult<SimpleConnection> 
         .ok_or_else(|| DbgmError::new("Firebird connection requires a database file path"))?;
 
     let conn = builder_pure_rust()
-        .host(server)
+        .host(host)
         .port(port)
         .db_name(database)
         .user(user)
@@ -140,10 +141,18 @@ impl EngineDriver for FirebirdDriver {
             .clone()
             .or_else(|| def.database.clone())
             .unwrap_or_default();
-        let conn = build_connection(def)?;
+        let server = def.server.clone().unwrap_or_else(|| "localhost".to_string());
+        let port = def.port.unwrap_or(3050) as u16;
+        let tunnel = SshTunnel::open(def, &server, port)?;
+        let (host, port) = match &tunnel {
+            Some(t) => t.local_endpoint(),
+            None => (server, port),
+        };
+        let conn = build_connection(def, &host, port)?;
         Ok(Box::new(FirebirdConnection {
             conn: Mutex::new(conn),
             database,
+            ssh_tunnel: tunnel,
         }))
     }
 

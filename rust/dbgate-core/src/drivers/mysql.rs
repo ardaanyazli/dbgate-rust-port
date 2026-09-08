@@ -33,6 +33,7 @@ use crate::driver::{
 };
 use crate::error::{DbgmError, DbgmResult};
 use crate::query::{QueryResult, QueryResultColumn};
+use crate::ssh_tunnel::SshTunnel;
 
 /// Dotted engine id for MySQL.
 pub const MYSQL_ENGINE: &str = "mysql@dbgate-plugin-mysql";
@@ -45,6 +46,8 @@ struct MySqlConnection {
     runtime: tokio::runtime::Runtime,
     conn: Mutex<Conn>,
     database: String,
+    #[allow(dead_code)]
+    ssh_tunnel: Option<SshTunnel>,
 }
 
 /// The MySQL driver.
@@ -119,18 +122,14 @@ fn out(err: mysql_async::Error) -> DbgmError {
 
 /// Build a [`Conn`] from a connection definition. The database defaults to
 /// `mysql` when not supplied.
-fn build_opts(def: &ConnectionDefinition) -> DbgmResult<OptsBuilder> {
-    let server = def
-        .server
-        .clone()
-        .ok_or_else(|| DbgmError::new("MySQL connection requires a server host"))?;
+fn build_opts(def: &ConnectionDefinition, host: &str, port: u16) -> DbgmResult<OptsBuilder> {
     let database = def
         .database
         .clone()
         .unwrap_or_else(|| "mysql".to_string());
     let builder = OptsBuilder::default()
-        .ip_or_hostname(server)
-        .tcp_port(def.port.unwrap_or(3306) as u16)
+        .ip_or_hostname(host)
+        .tcp_port(port)
         .user(def.user.clone())
         .pass(def.password.clone())
         .db_name(Some(database));
@@ -289,7 +288,17 @@ macro_rules! impl_driver {
             }
 
             fn connect(&self, def: &ConnectionDefinition) -> DbgmResult<DbHandle> {
-                let opts = build_opts(def)?;
+                let server = def
+                    .server
+                    .clone()
+                    .ok_or_else(|| DbgmError::new("MySQL connection requires a server host"))?;
+                let port = def.port.unwrap_or(3306) as u16;
+                let tunnel = SshTunnel::open(def, &server, port)?;
+                let (host, port) = match &tunnel {
+                    Some(t) => t.local_endpoint(),
+                    None => (server, port),
+                };
+                let opts = build_opts(def, &host, port)?;
                 let runtime = tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
                     .build()
@@ -319,6 +328,7 @@ macro_rules! impl_driver {
                     runtime,
                     conn: Mutex::new(conn),
                     database,
+                    ssh_tunnel: tunnel,
                 }))
             }
 

@@ -34,6 +34,7 @@ use crate::driver::{
 };
 use crate::error::{DbgmError, DbgmResult};
 use crate::query::{QueryResult, QueryResultColumn};
+use crate::ssh_tunnel::SshTunnel;
 
 /// Dotted engine id for Cassandra.
 pub const CASSANDRA_ENGINE: &str = "cassandra@dbgate-plugin-cassandra";
@@ -45,6 +46,8 @@ struct CassandraConnection {
     runtime: tokio::runtime::Runtime,
     session: Mutex<Session>,
     keyspace: String,
+    #[allow(dead_code)]
+    ssh_tunnels: Vec<SshTunnel>,
 }
 
 /// The Cassandra driver.
@@ -105,6 +108,96 @@ fn parse_contact_points(def: &ConnectionDefinition) -> DbgmResult<Vec<String>> {
         ));
     }
     Ok(points)
+}
+
+fn split_host_port(point: &str) -> DbgmResult<(String, u16)> {
+    match point.rsplit_once(':') {
+        Some((host, port)) => {
+            let port: u16 = port
+                .parse()
+                .map_err(|_| DbgmError::new(format!("Invalid Cassandra contact point port '{point}'")))?;
+            Ok((host.to_string(), port))
+        }
+        None => Err(DbgmError::new(format!(
+            "Invalid Cassandra contact point '{point}'"
+        ))),
+    }
+}
+
+fn connect_via_ssh_tunnel(
+    def: &ConnectionDefinition,
+    runtime: tokio::runtime::Runtime,
+    contact_points: Vec<String>,
+    keyspace: String,
+    local_dc: String,
+) -> DbgmResult<DbHandle> {
+    let (points, tunnels) = contact_points
+        .iter()
+        .map(|point| {
+            let (host, port) = split_host_port(point).unwrap_or_else(|e| {
+                tracing::warn!("Invalid Cassandra contact point '{point}': {e}");
+                (point.clone(), def.port.unwrap_or(9042) as u16)
+            });
+            let tunnel = SshTunnel::open(def, &host, port)?;
+            Ok::<_, DbgmError>(match tunnel {
+                Some(t) => {
+                    let (h, p) = t.local_endpoint();
+                    (format!("{h}:{p}"), Some(t))
+                }
+                None => (point.clone(), None),
+            })
+        })
+        .collect::<DbgmResult<Vec<_>>>()?
+        .into_iter()
+        .fold(
+            (Vec::new(), Vec::new()),
+            |(mut ps, mut ts), (p, t): (String, Option<SshTunnel>)| {
+                ps.push(p);
+                if let Some(t) = t {
+                    ts.push(t);
+                }
+                (ps, ts)
+            },
+        );
+
+    let session = runtime.block_on(async {
+        let mut builder = SessionBuilder::new();
+        for point in &points {
+            builder = builder.known_node(point);
+        }
+        builder = builder.prefer_datacenter(local_dc);
+
+        if let Some(user) = &def.user {
+            let pass = def.password.clone().unwrap_or_default();
+            builder = builder.user(user, pass);
+        }
+
+        let session = builder
+            .build()
+            .await
+            .map_err(|e| DbgmError::with_source("Cannot connect to Cassandra", e))?;
+
+        if !keyspace.is_empty() {
+            session
+                .use_keyspace(&keyspace, false)
+                .await
+                .map_err(|e| {
+                    DbgmError::with_source(
+                        format!("Cannot use Cassandra keyspace '{keyspace}'"),
+                        e,
+                    )
+                })?;
+        }
+
+        Ok::<_, DbgmError>(session)
+    })?;
+
+    Ok(Box::new(CassandraConnection {
+        runtime,
+        session: Mutex::new(session),
+        keyspace,
+        ssh_tunnels: tunnels,
+    }))
 }
 
 /// Substitute `#DATABASE#` in a CQL template string with the given keyspace.
@@ -776,6 +869,10 @@ impl EngineDriver for CassandraDriver {
             .unwrap_or("datacenter1")
             .to_string();
 
+        if def.use_ssh_tunnel.unwrap_or(false) {
+            return connect_via_ssh_tunnel(def, runtime, contact_points, keyspace, local_dc);
+        }
+
         let session = runtime.block_on(async {
             let mut builder = SessionBuilder::new();
             for point in &contact_points {
@@ -812,6 +909,7 @@ impl EngineDriver for CassandraDriver {
             runtime,
             session: Mutex::new(session),
             keyspace,
+            ssh_tunnels: Vec::new(),
         }))
     }
 

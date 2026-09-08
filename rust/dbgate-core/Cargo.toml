@@ -25,4 +25,5 @@ clickhouse.workspace = true
 oracledb.workspace = true
 rsfbclient.workspace = true
 scylla.workspace = true
+openssh = "0.11.6"
 keyring.workspace = true

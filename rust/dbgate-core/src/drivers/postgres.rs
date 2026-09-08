@@ -31,18 +31,22 @@ use crate::driver::{
 };
 use crate::error::{DbgmError, DbgmResult};
 use crate::query::{QueryResult, QueryResultColumn};
+use crate::ssh_tunnel::SshTunnel;
 
 /// Dotted engine id for PostgreSQL.
 pub const POSTGRES_ENGINE: &str = "postgres@dbgate-plugin-postgres";
 
 /// An open PostgreSQL connection: the runtime driving the tokio client, the
-/// client itself (behind a mutex for serialized access), and the OID -> type-name
+/// client itself (behind a mutex for serialized access), the OID -> type-name
 /// map loaded at connect time (used to detect `bytea` / PostGIS geography and
-/// geometry columns).
+/// geometry columns), and the SSH tunnel used to reach the server (kept alive
+/// for the whole connection lifetime).
 struct PostgresConnection {
     runtime: tokio::runtime::Runtime,
     client: Mutex<Client>,
     type_id_to_name: HashMap<u32, String>,
+    #[allow(dead_code)]
+    ssh_tunnel: Option<SshTunnel>,
 }
 
 /// The PostgreSQL driver.
@@ -76,15 +80,10 @@ pub fn driver_ref() -> std::sync::Arc<dyn EngineDriver> {
 
 /// Build a tokio_postgres [`Client`] configuration from a connection
 /// definition. The database defaults to `postgres` when not supplied.
-fn build_config(def: &ConnectionDefinition) -> DbgmResult<tokio_postgres::Config> {
-    let server = def
-        .server
-        .clone()
-        .ok_or_else(|| DbgmError::new("PostgreSQL connection requires a server host"))?;
-
+fn build_config(def: &ConnectionDefinition, host: &str, port: u16) -> DbgmResult<tokio_postgres::Config> {
     let mut config = tokio_postgres::Config::new();
-    config.host(&server);
-    config.port(def.port.unwrap_or(5432) as u16);
+    config.host(host);
+    config.port(port);
     if let Some(user) = &def.user {
         config.user(user);
     }
@@ -276,7 +275,17 @@ impl EngineDriver for PostgresDriver {
     }
 
     fn connect(&self, def: &ConnectionDefinition) -> DbgmResult<DbHandle> {
-        let config = build_config(def)?;
+        let server = def
+            .server
+            .clone()
+            .ok_or_else(|| DbgmError::new("PostgreSQL connection requires a server host"))?;
+        let port = def.port.unwrap_or(5432) as u16;
+        let tunnel = SshTunnel::open(def, &server, port)?;
+        let (host, port) = match &tunnel {
+            Some(t) => t.local_endpoint(),
+            None => (server, port),
+        };
+        let config = build_config(def, &host, port)?;
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -300,6 +309,7 @@ impl EngineDriver for PostgresDriver {
             runtime,
             client: Mutex::new(client),
             type_id_to_name: HashMap::new(),
+            ssh_tunnel: tunnel,
         };
 
         // Load the OID -> type-name map (bytea / geography / geometry).

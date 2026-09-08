@@ -34,6 +34,7 @@ use crate::driver::{
 };
 use crate::error::{DbgmError, DbgmResult};
 use crate::query::{QueryResult, QueryResultColumn};
+use crate::ssh_tunnel::SshTunnel;
 
 /// Dotted engine id for SQL Server.
 pub const MSSQL_ENGINE: &str = "mssql@dbgate-plugin-mssql";
@@ -45,6 +46,8 @@ struct MssqlConnection {
     runtime: tokio::runtime::Runtime,
     client: Mutex<TdsClient>,
     database: Option<String>,
+    #[allow(dead_code)]
+    ssh_tunnel: Option<SshTunnel>,
 }
 
 /// The SQL Server driver.
@@ -375,7 +378,18 @@ impl EngineDriver for MssqlDriver {
     }
 
     fn connect(&self, def: &ConnectionDefinition) -> DbgmResult<DbHandle> {
-        let config = build_config(def)?;
+        let server = def
+            .server
+            .clone()
+            .ok_or_else(|| DbgmError::new("MSSQL connection requires a server host"))?;
+        let port = def.port.unwrap_or(1433) as u16;
+        let tunnel = SshTunnel::open(def, &server, port)?;
+        let mut config = build_config(def)?;
+        if let Some(t) = &tunnel {
+            let (host, port) = t.local_endpoint();
+            config.host(host);
+            config.port(port);
+        }
         let addr = config.get_addr();
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -398,6 +412,7 @@ impl EngineDriver for MssqlDriver {
             runtime,
             client: Mutex::new(client),
             database: def.database.clone(),
+            ssh_tunnel: tunnel,
         }))
     }
 

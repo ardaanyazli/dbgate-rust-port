@@ -21,5 +21,6 @@ pub mod query;
 pub mod query_splitter;
 pub mod registry;
 pub mod security;
+pub mod ssh_tunnel;
 
 pub use error::{DbgmError, DbgmResult};

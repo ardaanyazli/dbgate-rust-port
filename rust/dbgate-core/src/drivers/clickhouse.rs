@@ -15,6 +15,7 @@ use crate::driver::{
 };
 use crate::error::{DbgmError, DbgmResult};
 use crate::query::{QueryResult, QueryResultColumn};
+use crate::ssh_tunnel::SshTunnel;
 
 pub const CLICKHOUSE_ENGINE: &str = "clickhouse@dbgate-plugin-clickhouse";
 
@@ -22,6 +23,8 @@ struct ClickHouseConnection {
     runtime: tokio::runtime::Runtime,
     client: clickhouse::Client,
     database: String,
+    #[allow(dead_code)]
+    ssh_tunnel: Option<SshTunnel>,
 }
 
 pub struct ClickHouseDriver;
@@ -48,13 +51,8 @@ fn out(e: impl std::fmt::Display) -> DbgmError {
     DbgmError::new(e.to_string())
 }
 
-fn build_url(def: &ConnectionDefinition) -> DbgmResult<String> {
-    let server = def
-        .server
-        .clone()
-        .ok_or_else(|| DbgmError::new("ClickHouse connection requires a server host"))?;
-    let port = def.port.unwrap_or(8123);
-    Ok(format!("http://{server}:{port}"))
+fn build_url(host: &str, port: u16) -> String {
+    format!("http://{host}:{port}")
 }
 
 fn substitute_condition(template: &str, database: &str, object_id: Option<&str>) -> String {
@@ -426,7 +424,17 @@ impl EngineDriver for ClickHouseDriver {
     }
 
     fn connect(&self, def: &ConnectionDefinition) -> DbgmResult<DbHandle> {
-        let url = build_url(def)?;
+        let server = def
+            .server
+            .clone()
+            .ok_or_else(|| DbgmError::new("ClickHouse connection requires a server host"))?;
+        let port = def.port.unwrap_or(8123) as u16;
+        let tunnel = SshTunnel::open(def, &server, port)?;
+        let (host, port) = match &tunnel {
+            Some(t) => t.local_endpoint(),
+            None => (server, port),
+        };
+        let url = build_url(&host, port);
         let database = def
             .database
             .clone()
@@ -462,6 +470,7 @@ impl EngineDriver for ClickHouseDriver {
             runtime,
             client,
             database: db_clone,
+            ssh_tunnel: tunnel,
         }))
     }
 

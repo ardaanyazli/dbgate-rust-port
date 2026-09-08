@@ -42,6 +42,29 @@ pub struct ConnectionDefinition {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_type: Option<String>,
 
+    /// Open a local SSH port forward to `server:port` via `ssh_host` before
+    /// connecting (false/absent = connect directly).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub use_ssh_tunnel: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_host: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_port: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_login: Option<String>,
+    /// SSH auth mode: `userPassword`, `keyFile` or `agent`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_password: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_keyfile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_keyfile_password: Option<String>,
+    /// Optional SSH bastion (jump) host ahead of `ssh_host`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_bastion_host: Option<String>,
+
     /// Any engine-specific extra fields, keyed by field name.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub extra: Option<std::collections::BTreeMap<String, Value>>,

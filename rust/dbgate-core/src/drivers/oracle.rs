@@ -37,15 +37,19 @@ use crate::driver::{
 };
 use crate::error::{DbgmError, DbgmResult};
 use crate::query::{QueryResult, QueryResultColumn};
+use crate::ssh_tunnel::SshTunnel;
 
 /// Dotted engine id for Oracle.
 pub const ORACLE_ENGINE: &str = "oracle@dbgate-plugin-oracle";
 
 /// An open Oracle connection: the blocking [`Connection`] (Send + Sync, so no
-/// mutex) and the current schema used for `$owner` substitution.
+/// mutex), the current schema used for `$owner` substitution, and the SSH
+/// tunnel used to reach the server (kept alive for the connection lifetime).
 struct OracleConnection {
     conn: Connection,
     database: Option<String>,
+    #[allow(dead_code)]
+    ssh_tunnel: Option<SshTunnel>,
 }
 
 /// The Oracle driver.
@@ -77,18 +81,14 @@ fn out(err: oracledb::Error) -> DbgmError {
     DbgmError::new(format!("Oracle error: {err}"))
 }
 
-/// Build an Oracle connect string from a connection definition. The generic
-/// [`ConnectionDefinition`] does not carry a dedicated Oracle service name, so
-/// the `server:port` form is used; the `database` field is applied afterwards
-/// as the `CURRENT_SCHEMA`. When `auth_type` is `url`, `database` is treated
-/// as a full connect string (host[:port]/service) instead.
-fn connect_string(def: &ConnectionDefinition) -> String {
-    let server = def.server.clone().unwrap_or_default();
-    let port = def.port.unwrap_or(1521);
+fn connect_string(def: &ConnectionDefinition, host: &str, port: u16) -> String {
     if def.auth_type.as_deref() == Some("url") {
-        return def.database.clone().unwrap_or_else(|| format!("{server}:{port}"));
+        return def
+            .database
+            .clone()
+            .unwrap_or_else(|| format!("{host}:{port}"));
     }
-    format!("{server}:{port}")
+    format!("{host}:{port}")
 }
 
 impl EngineDriver for OracleDriver {
@@ -112,9 +112,19 @@ impl EngineDriver for OracleDriver {
     }
 
     fn connect(&self, def: &ConnectionDefinition) -> DbgmResult<DbHandle> {
+        let server = def
+            .server
+            .clone()
+            .ok_or_else(|| DbgmError::new("Oracle connection requires a server host"))?;
+        let port = def.port.unwrap_or(1521) as u16;
+        let tunnel = SshTunnel::open(def, &server, port)?;
+        let (host, port) = match &tunnel {
+            Some(t) => t.local_endpoint(),
+            None => (server, port),
+        };
         let config = Config::default()
             .set_credentials(&def.user.clone().unwrap_or_default(), &def.password.clone().unwrap_or_default())
-            .set_connect_string(&connect_string(def))
+            .set_connect_string(&connect_string(def, &host, port))
             .map_err(out)?;
         let conn = oracledb::connect(config).map_err(out)?;
 
@@ -128,7 +138,7 @@ impl EngineDriver for OracleDriver {
             .map_err(out)?;
         }
 
-        Ok(Box::new(OracleConnection { conn, database }))
+        Ok(Box::new(OracleConnection { conn, database, ssh_tunnel: tunnel }))
     }
 
     fn close(&self, handle: DbHandle) -> DbgmResult<()> {

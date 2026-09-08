@@ -17,6 +17,9 @@ use serde_json::{json, Value};
 
 use crate::DbgmState;
 
+/// The top-level SSH secret fields stored alongside a connection.
+const SSH_SECRET_KEYS: &[&str] = &["sshPassword", "sshKeyfilePassword"];
+
 /// JSON-lines store with the same semantics as the Node datastore.
 pub struct ConnectionsStore {
     path: PathBuf,
@@ -64,6 +67,7 @@ impl ConnectionsStore {
                 obj["password"] = placeholder;
             }
         }
+        self.vault_secrets_for_keys(conid, obj, SSH_SECRET_KEYS);
         if let Some(extra) = obj.get_mut("extra").and_then(Value::as_object_mut) {
             for key in ["sshPassword", "sshPassphrase"] {
                 if let Some(secret) = extra.get(key).and_then(Value::as_str) {
@@ -81,11 +85,26 @@ impl ConnectionsStore {
             let secret = resolve_password(self.vault.as_ref(), stored);
             obj["password"] = json!(secret);
         }
+        for key in SSH_SECRET_KEYS {
+            if let Some(stored) = obj.get(key).and_then(Value::as_str) {
+                obj[key] = json!(resolve_password(self.vault.as_ref(), stored));
+            }
+        }
         if let Some(extra) = obj.get_mut("extra").and_then(Value::as_object_mut) {
             for key in ["sshPassword", "sshPassphrase"] {
                 if let Some(stored) = extra.get(key).and_then(Value::as_str) {
                     let secret = resolve_password(self.vault.as_ref(), stored);
                     extra.insert(key.to_string(), json!(secret));
+                }
+            }
+        }
+    }
+
+    fn vault_secrets_for_keys(&self, conid: &str, obj: &mut Value, keys: &[&str]) {
+        for key in keys {
+            if let Some(secret) = obj.get(key).and_then(Value::as_str) {
+                if let Some(placeholder) = self.vault_one(conid, key, secret) {
+                    obj[key] = placeholder;
                 }
             }
         }
@@ -584,6 +603,38 @@ mod tests {
         let got = store.get(&id).unwrap();
         assert_eq!(got["password"].as_str().unwrap(), "dbsecret");
         assert_eq!(got["extra"]["sshPassword"].as_str().unwrap(), "sshsecret");
+
+        drop(store);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn top_level_ssh_secrets_are_vaulted_and_resolved() {
+        let (store, dir) = vault_store("vaultssh", Box::new(StubVault::ok()));
+        let saved = store
+            .insert(json!({
+                "name": "v",
+                "engine": "postgres@dbgate-plugin-postgres",
+                "useSshTunnel": true,
+                "sshHost": "gateway",
+                "sshMode": "userPassword",
+                "sshPassword": "sshsecret",
+                "sshKeyfilePassword": "keypass",
+                "password": "dbsecret"
+            }))
+            .unwrap();
+        let id = saved["_id"].as_str().unwrap().to_string();
+
+        let raw = fs::read_to_string(&store.path).unwrap();
+        assert!(!raw.contains("sshsecret"));
+        assert!(!raw.contains("keypass"));
+        assert!(!raw.contains("dbsecret"));
+        assert!(raw.contains("keyring:"));
+
+        let got = store.get(&id).unwrap();
+        assert_eq!(got["sshPassword"].as_str().unwrap(), "sshsecret");
+        assert_eq!(got["sshKeyfilePassword"].as_str().unwrap(), "keypass");
+        assert_eq!(got["password"].as_str().unwrap(), "dbsecret");
 
         drop(store);
         let _ = fs::remove_dir_all(&dir);
