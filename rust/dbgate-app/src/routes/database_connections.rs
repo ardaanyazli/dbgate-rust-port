@@ -161,6 +161,57 @@ pub fn run_script(state: &DbgmState, args: Value) -> Result<Value, String> {
     }
 }
 
+/// `database_connections_eval_json_script` — run a SQL script and store the
+/// last statement's result set in the jslid buffer for the web exporter to
+/// drain (`exportFileTools.ts` calls `eval-json-script`). Not transactional:
+/// this is the read/export path.
+pub fn eval_json_script(state: &DbgmState, args: Value) -> Result<Value, String> {
+    let conid = args
+        .get("conid")
+        .and_then(Value::as_str)
+        .ok_or_else(|| route_error("eval_json_script missing conid"))?;
+    let script = args
+        .get("script")
+        .and_then(Value::as_str)
+        .ok_or_else(|| route_error("eval_json_script missing script"))?;
+
+    let (columns, rows) = {
+        ensure_connected(state, conid)?;
+        let guard = state
+            .connections
+            .lock()
+            .map_err(|_| route_error("connections lock poisoned"))?;
+        let conn = guard
+            .get(conid)
+            .ok_or_else(|| route_error(format!("Unknown connection {conid}")))?;
+        let options = QueryOptions {
+            discard_result: false,
+            ..Default::default()
+        };
+        let result = split_sql(script)
+            .iter()
+            .filter(|item| !item.trim().is_empty())
+            .try_fold(QueryResult::empty(), |_, item| {
+                conn.driver
+                    .query(&conn.handle, item, &options)
+                    .map_err(|e| route_error(e.to_string()))
+            })?;
+        (result.columns, result.rows)
+    };
+
+    let jslid = state.jsl_create(columns.clone());
+    for row in &rows {
+        state.jsl_push_row(&jslid, row);
+    }
+    state.jsl_finish(&jslid);
+
+    Ok(json!({
+        "jslid": jslid,
+        "columns": serde_json::to_value(columns).map_err(|e| route_error(e.to_string()))?,
+        "rowCount": rows.len(),
+    }))
+}
+
 /// Run `analyse_full` on the connected database and serialize the result.
 /// Shared by `sync_model` and `structure`.
 fn analyse(state: &DbgmState, conid: &str) -> Result<Value, String> {
@@ -735,5 +786,83 @@ mod tests {
         .unwrap_err();
         assert!(err.starts_with("DBGM-00000"));
         assert!(err.contains("Unknown connection nope"));
+    }
+
+    #[test]
+    fn eval_json_script_returns_jslid_envelope_and_stores_rows() {
+        let state = test_state();
+        open_sqlite(&state, "sqlite-eval");
+
+        let result = crate::routes::dispatch(
+            &state,
+            "database_connections_eval_json_script",
+            json!({"conid": "sqlite-eval", "script": "SELECT 1 AS one UNION ALL SELECT 2 AS one"}),
+        )
+        .unwrap();
+        let jslid = result["jslid"].as_str().unwrap();
+        assert_eq!(result["rowCount"], json!(2));
+        assert_eq!(result["columns"][0]["columnName"], json!("one"));
+
+        let stats = state.jsl_stats(jslid).unwrap();
+        assert_eq!(stats["rowCount"], json!(2));
+        assert_eq!(stats["isFinished"], json!(true));
+        let rows = state.jsl_rows(jslid, 0, 100).unwrap();
+        assert_eq!(rows[0]["one"], json!(1));
+        assert_eq!(rows[1]["one"], json!(2));
+
+        let drained = crate::routes::dispatch(
+            &state,
+            "jsldata_get_rows",
+            json!({"jslid": jslid, "offset": 0, "limit": 100}),
+        )
+        .unwrap();
+        assert_eq!(drained["rows"][0]["one"], json!(1));
+    }
+
+    #[test]
+    fn eval_json_script_last_statement_of_script_wins() {
+        let state = test_state();
+        open_sqlite(&state, "sqlite-eval-2");
+
+        let result = eval_json_script(
+            &state,
+            json!({"conid": "sqlite-eval-2", "script": "SELECT 1 AS one; SELECT 2 AS two"}),
+        )
+        .unwrap();
+        let jslid = result["jslid"].as_str().unwrap();
+        assert_eq!(result["rowCount"], json!(1));
+        assert_eq!(result["columns"][0]["columnName"], json!("two"));
+
+        let rows = state.jsl_rows(jslid, 0, 100).unwrap();
+        assert_eq!(rows[0]["two"], json!(2));
+        assert!(rows[0].get("one").is_none());
+    }
+
+    #[test]
+    fn eval_json_script_unknown_conid_errors() {
+        let state = test_state();
+        let err = crate::routes::dispatch(
+            &state,
+            "database_connections_eval_json_script",
+            json!({"conid": "nope", "script": "SELECT 1"}),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("DBGM-00000"));
+        assert!(err.contains("Unknown connection nope"));
+    }
+
+    #[test]
+    fn eval_json_script_missing_script_errors() {
+        let state = test_state();
+        open_sqlite(&state, "sqlite-eval-3");
+
+        let err = crate::routes::dispatch(
+            &state,
+            "database_connections_eval_json_script",
+            json!({"conid": "sqlite-eval-3"}),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("DBGM-00000"));
+        assert!(err.contains("eval_json_script missing script"));
     }
 }

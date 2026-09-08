@@ -38,6 +38,9 @@ pub fn dispatch(state: &DbgmState, route: &str, args: Value) -> Result<Value, St
         "plugins_script" => plugins::script(state, args),
         "database_connections_sql_select" => database_connections::sql_select(state, args),
         "database_connections_run_script" => database_connections::run_script(state, args),
+        "database_connections_eval_json_script" => database_connections::eval_json_script(state, args),
+        "database_connections_backup_native" => backup::backup_native(state, args),
+        "database_connections_restore_native" => backup::restore_native(state, args),
         "database_connections_sync_model" => database_connections::sync_model(state, args),
         "database_connections_structure" => database_connections::structure(state, args),
         "database_connections_status" => database_connections::status(state, args),
@@ -62,6 +65,7 @@ pub fn dispatch(state: &DbgmState, route: &str, args: Value) -> Result<Value, St
 }
 
 mod apps;
+mod backup;
 mod config;
 mod connections;
 mod database_connections;

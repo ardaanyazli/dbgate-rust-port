@@ -268,8 +268,8 @@ impl EngineDriver for PostgresDriver {
         Capabilities {
             read_only_sessions: false,
             supports_transactions: true,
-            supports_native_backup: false,
-            supports_native_restore: false,
+            supports_native_backup: true,
+            supports_native_restore: true,
             supports_server_summary: true,
             default_port: Some(5432),
         }
