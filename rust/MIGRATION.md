@@ -66,17 +66,17 @@ them or bridge to the sidecar. They are out of scope for the backend rewrite.
 
 After the drivers, the remaining Node backend modules need Rust equivalents:
 
-| Node module | Rust crate / approach |
-|---|---|
-| SQL splitter (`dbgate-query-splitter`) | `sqlparser` (or hand-rolled splitter, as in sqlite driver) |
-| SQL tree / query designer (`dbgate-sqltree`) | `sqlparser` AST |
-| SQL dumper / DDL generation (`dbgate-tools`) | custom, per-dialect |
-| Filter parser & data library (`dbgate-datalib`) | `polars` / `arrow` |
-| SSH tunneling (`ssh2`) | `russh` / `openssh` |
-| Config persistence (`config-root.json`, `settings.json`) | `tauri-plugin-store` |
-| Native backup/restore CLI wrappers | `std::process::Command` |
-| HTTP/REST API (web mode) | `axum` (only needed for web mode) |
-| Auth / JWT / license | `jsonwebtoken`, permissive/classic licensing |
+| Node module | Rust crate / approach | Status |
+|---|---|---|
+| SQL splitter (`dbgate-query-splitter`) | hand-rolled splitter extracted to `query_splitter.rs` | ✅ done (`run_script` splits + transaction window) |
+| SQL tree / query designer (`dbgate-sqltree`) | stays JS-side, consumed via `plugins_script` eval-loop | frontend-only, no Rust port |
+| SQL dumper / DDL generation (`dbgate-tools`) | custom, per-dialect | pending |
+| Filter parser & data library (`dbgate-datalib`) | `polars` / `arrow` | pending |
+| SSH tunneling (`ssh2`) | `openssh` 0.11.6 (request_port_forward) | pending (workstream B) |
+| Config persistence (`config-root.json`, `settings.json`) | `connections.jsonl` canonical + `keyring` 4.2.0 credential vault | ✅ done (secrets) |
+| Native backup/restore CLI wrappers | `std::process::Command` (`mysqldump`/`pg_dump`) | pending (workstream C) |
+| HTTP/REST API (web mode) | `axum` (only needed for web mode) | skipped (M6 out of scope) |
+| Auth / JWT / license | `jsonwebtoken`, permissive/classic licensing | out of scope |
 
 ## Delivery roadmap (recommended order)
 
@@ -89,8 +89,10 @@ After the drivers, the remaining Node backend modules need Rust equivalents:
    only the catalog queries and value mapping differ.
 4. **Milestone 4 — Non-SQL engines**: MongoDB → Redis → Cassandra.
    Cassandra driver **done** (scylla 1.8.0).
-5. **Milestone 5 — Cross-cutting**: sqlparser integration, SSH tunnels,
-   dump/restore, config/auth.
+5. **Milestone 5 — Cross-cutting**: SQL splitter + keyring credential vault
+   **done** (query_splitter.rs generalizes sqlite's hand-rolled splitter into the
+   generic `run_script`; connections store secrets as `keyring:<conid>`
+   placeholders with plaintext fallback). SSH tunnels, dump/restore pending.
 6. **Milestone 6 — Web mode**: axum HTTP server for the browser/Docker target.
 
 Each milestone is shippable and independently testable. Do **not** attempt to
@@ -109,6 +111,9 @@ entirely. The Rust backend targets the desktop (Tauri v2) application only.
 - Milestone 1 is committed and pushed. Milestone 3 (network SQL engines) is
   **complete and pushed to origin** — SQL Server, PostgreSQL, MySQL/MariaDB,
   ClickHouse, Oracle, and Firebird drivers are all done.
+- Milestone 4 (Cassandra) is committed and pushed. Milestone 5 workstreams A
+  (SQL splitter) and D (keyring credential vault) are committed and pushed;
+  workstreams C (backup/restore) and B (SSH tunnels) remain.
 
 ## Verification discipline (carried into every driver)
 

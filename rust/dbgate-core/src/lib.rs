@@ -18,6 +18,8 @@ pub mod driver;
 pub mod drivers;
 pub mod error;
 pub mod query;
+pub mod query_splitter;
 pub mod registry;
+pub mod security;
 
 pub use error::{DbgmError, DbgmResult};

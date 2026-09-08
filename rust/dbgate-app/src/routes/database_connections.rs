@@ -12,6 +12,8 @@ use serde_json::{json, Value};
 
 use dbgate_core::connection::ConnectionDefinition;
 use dbgate_core::driver::QueryOptions;
+use dbgate_core::query::QueryResult;
+use dbgate_core::query_splitter::split_sql;
 
 use super::connections::ConnectionsStore;
 use super::route_error;
@@ -94,6 +96,10 @@ pub fn sql_select(state: &DbgmState, args: Value) -> Result<Value, String> {
 }
 
 /// `database_connections_run_script` — execute a SQL script on a connection.
+///
+/// Splits the script and runs each statement with `discard_result`, wrapping
+/// the batch in BEGIN/COMMIT/ROLLBACK when `useTransaction` is requested and
+/// the driver supports transactions (mirrors `driverBase.runScriptAuto`).
 pub fn run_script(state: &DbgmState, args: Value) -> Result<Value, String> {
     let conid = args
         .get("conid")
@@ -103,6 +109,10 @@ pub fn run_script(state: &DbgmState, args: Value) -> Result<Value, String> {
         .get("sql")
         .and_then(Value::as_str)
         .ok_or_else(|| route_error("run_script missing sql"))?;
+    let use_transaction = args
+        .get("useTransaction")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     ensure_connected(state, conid)?;
     let guard = state
@@ -113,14 +123,42 @@ pub fn run_script(state: &DbgmState, args: Value) -> Result<Value, String> {
         .get(conid)
         .ok_or_else(|| route_error(format!("Unknown connection {conid}")))?;
     let options = QueryOptions {
-        discard_result: false,
+        discard_result: true,
         ..Default::default()
     };
-    let result = conn
-        .driver
-        .query(&conn.handle, sql, &options)
-        .map_err(|e| route_error(e.to_string()))?;
-    serde_json::to_value(result).map_err(|e| route_error(e.to_string()))
+    let in_transaction = use_transaction && conn.driver.capabilities().supports_transactions;
+
+    if in_transaction {
+        conn.driver
+            .query(&conn.handle, "BEGIN", &options)
+            .map_err(|e| route_error(e.to_string()))?;
+    }
+
+    let last_result = split_sql(sql)
+        .iter()
+        .filter(|item| !item.trim().is_empty())
+        .try_fold(QueryResult::empty(), |_, item| {
+            conn.driver
+                .query(&conn.handle, item, &options)
+                .map_err(|e| route_error(e.to_string()))
+        });
+
+    match last_result {
+        Ok(result) => {
+            if in_transaction {
+                conn.driver
+                    .query(&conn.handle, "COMMIT", &options)
+                    .map_err(|e| route_error(e.to_string()))?;
+            }
+            serde_json::to_value(result).map_err(|e| route_error(e.to_string()))
+        }
+        Err(err) => {
+            if in_transaction {
+                let _ = conn.driver.query(&conn.handle, "ROLLBACK", &options);
+            }
+            Err(err)
+        }
+    }
 }
 
 /// Run `analyse_full` on the connected database and serialize the result.
@@ -376,6 +414,83 @@ mod tests {
                 "databaseFile": ":memory:"
             }))
             .unwrap();
+    }
+
+    #[test]
+    fn run_script_executes_all_statements_of_a_script() {
+        let state = test_state();
+        open_sqlite(&state, "sqlite-script");
+
+        let result = run_script(
+            &state,
+            json!({
+                "conid": "sqlite-script",
+                "sql": "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO t (name) VALUES ('a'); INSERT INTO t (name) VALUES ('b')"
+            }),
+        )
+        .unwrap();
+        assert!(result["rows"].is_array());
+        assert!(result["columns"].is_array());
+
+        let rows = sql_select(
+            &state,
+            json!({"conid": "sqlite-script", "sql": "SELECT * FROM t ORDER BY id", "limit": 1000}),
+        )
+        .unwrap();
+        assert_eq!(rows["rows"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn run_script_uses_transaction_when_requested() {
+        let state = test_state();
+        open_sqlite(&state, "sqlite-script-txn");
+
+        run_script(
+            &state,
+            json!({
+                "conid": "sqlite-script-txn",
+                "sql": "CREATE TABLE t (id INTEGER PRIMARY KEY); INSERT INTO t VALUES (1); INSERT INTO t VALUES (2)",
+                "useTransaction": true
+            }),
+        )
+        .unwrap();
+
+        let rows = sql_select(
+            &state,
+            json!({"conid": "sqlite-script-txn", "sql": "SELECT COUNT(*) AS cnt FROM t", "limit": 1000}),
+        )
+        .unwrap();
+        assert_eq!(rows["rows"][0]["cnt"], json!(2));
+    }
+
+    #[test]
+    fn run_script_rolls_back_and_surfaces_error_on_failure() {
+        let state = test_state();
+        open_sqlite(&state, "sqlite-script-rollback");
+
+        let err = run_script(
+            &state,
+            json!({
+                "conid": "sqlite-script-rollback",
+                "sql": "CREATE TABLE t (id INTEGER PRIMARY KEY); INSERT INTO t VALUES (1); INSERT INTO t VALUES (1)",
+                "useTransaction": true
+            }),
+        )
+        .unwrap_err();
+
+        assert!(err.starts_with("DBGM-00000"));
+        assert!(err.contains("UNIQUE constraint"));
+
+        let rows = sql_select(
+            &state,
+            json!({
+                "conid": "sqlite-script-rollback",
+                "sql": "SELECT name FROM sqlite_master WHERE type='table'",
+                "limit": 1000
+            }),
+        )
+        .unwrap();
+        assert!(rows["rows"].as_array().unwrap().is_empty());
     }
 
     #[test]

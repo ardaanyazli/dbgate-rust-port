@@ -18,6 +18,7 @@ use crate::driver::{
 };
 use crate::error::{DbgmError, DbgmResult};
 use crate::query::{QueryResult, QueryResultColumn};
+use crate::query_splitter::split_sql;
 
 /// Dotted engine id for SQLite.
 pub const SQLITE_ENGINE: &str = "sqlite@dbgate-plugin-sqlite";
@@ -268,89 +269,6 @@ impl EngineDriver for SqliteDriver {
     fn as_any(&self) -> &dyn Any {
         self
     }
-}
-
-fn split_sql(sql: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut current = String::new();
-    let mut in_quote: Option<char> = None;
-    let mut in_line_comment = false;
-    let mut in_block_comment = false;
-    let chars: Vec<char> = sql.chars().collect();
-    let mut i = 0;
-
-    while i < chars.len() {
-        let c = chars[i];
-        let next = chars.get(i + 1).copied();
-
-        if in_line_comment {
-            if c == '\n' {
-                in_line_comment = false;
-            }
-            current.push(c);
-            i += 1;
-            continue;
-        }
-        if in_block_comment {
-            if c == '*' && next == Some('/') {
-                in_block_comment = false;
-                current.push(c);
-                current.push('/');
-                i += 2;
-                continue;
-            }
-            current.push(c);
-            i += 1;
-            continue;
-        }
-        if let Some(q) = in_quote {
-            current.push(c);
-            if c == q {
-                in_quote = None;
-            }
-            i += 1;
-            continue;
-        }
-
-        match c {
-            '\'' | '"' | '`' => {
-                in_quote = Some(c);
-                current.push(c);
-                i += 1;
-            }
-            '-' if next == Some('-') => {
-                in_line_comment = true;
-                current.push(c);
-                current.push('-');
-                i += 2;
-            }
-            '/' if next == Some('*') => {
-                in_block_comment = true;
-                current.push(c);
-                current.push('*');
-                i += 2;
-            }
-            ';' => {
-                let trimmed = current.trim().to_string();
-                if !trimmed.is_empty() {
-                    out.push(trimmed);
-                }
-                current.clear();
-                i += 1;
-            }
-            _ => {
-                current.push(c);
-                i += 1;
-            }
-        }
-    }
-
-    let trimmed = current.trim().to_string();
-    if !trimmed.is_empty() {
-        out.push(trimmed);
-    }
-
-    out
 }
 
 fn analyse_sqlite_full(handle: &DbHandle) -> DbgmResult<DatabaseInfo> {

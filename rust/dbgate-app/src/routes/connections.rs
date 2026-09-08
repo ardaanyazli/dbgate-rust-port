@@ -10,6 +10,9 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
+use dbgate_core::security::{
+    is_placeholder, resolve_password, CredentialStore, CredentialVault, SECRET_PLACEHOLDER_PREFIX,
+};
 use serde_json::{json, Value};
 
 use crate::DbgmState;
@@ -17,11 +20,75 @@ use crate::DbgmState;
 /// JSON-lines store with the same semantics as the Node datastore.
 pub struct ConnectionsStore {
     path: PathBuf,
+    vault: Box<dyn CredentialStore>,
 }
 
 impl ConnectionsStore {
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            path,
+            vault: Box::new(CredentialVault::new()),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_vault(path: PathBuf, vault: Box<dyn CredentialStore>) -> Self {
+        Self { path, vault }
+    }
+
+    /// Store one secret in the vault; on success return the `keyring:`
+    /// placeholder to write in its place, `None` (keeping plaintext) when the
+    /// vault errors or the value is empty / already a placeholder.
+    fn vault_one(&self, conid: &str, key: &str, secret: &str) -> Option<Value> {
+        if secret.is_empty() || is_placeholder(secret) {
+            return None;
+        }
+        let user = if key == "password" {
+            conid.to_string()
+        } else {
+            format!("{conid}:{key}")
+        };
+        self.vault.set_password(&user, secret).ok()?;
+        Some(json!(format!("{SECRET_PLACEHOLDER_PREFIX}{user}")))
+    }
+
+    /// Rewrite every secret on the object to a `keyring:` placeholder when the
+    /// vault accepts it; keep plaintext on any keyring error.
+    fn vault_secrets(&self, conid: &str, obj: &mut Value) {
+        if let Some(secret) = obj
+            .get("password")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        {
+            if let Some(placeholder) = self.vault_one(conid, "password", &secret) {
+                obj["password"] = placeholder;
+            }
+        }
+        if let Some(extra) = obj.get_mut("extra").and_then(Value::as_object_mut) {
+            for key in ["sshPassword", "sshPassphrase"] {
+                if let Some(secret) = extra.get(key).and_then(Value::as_str) {
+                    if let Some(placeholder) = self.vault_one(conid, key, secret) {
+                        extra.insert(key.to_string(), placeholder);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Resolve every stored secret on the object back to its plaintext form.
+    fn resolve_secrets(&self, obj: &mut Value) {
+        if let Some(stored) = obj.get("password").and_then(Value::as_str) {
+            let secret = resolve_password(self.vault.as_ref(), stored);
+            obj["password"] = json!(secret);
+        }
+        if let Some(extra) = obj.get_mut("extra").and_then(Value::as_object_mut) {
+            for key in ["sshPassword", "sshPassphrase"] {
+                if let Some(stored) = extra.get(key).and_then(Value::as_str) {
+                    let secret = resolve_password(self.vault.as_ref(), stored);
+                    extra.insert(key.to_string(), json!(secret));
+                }
+            }
+        }
     }
 
     pub fn default_path(state: &DbgmState) -> PathBuf {
@@ -64,15 +131,23 @@ impl ConnectionsStore {
     }
 
     pub fn find(&self) -> Result<Vec<Value>, String> {
-        self.load()
+        let mut items = self.load()?;
+        for item in items.iter_mut() {
+            self.resolve_secrets(item);
+        }
+        Ok(items)
     }
 
     pub fn get(&self, id: &str) -> Result<Value, String> {
-        Ok(self
+        let mut value = self
             .load()?
             .into_iter()
             .find(|x| x.get("_id").and_then(Value::as_str) == Some(id))
-            .unwrap_or(Value::Null))
+            .unwrap_or(Value::Null);
+        if value.is_object() {
+            self.resolve_secrets(&mut value);
+        }
+        Ok(value)
     }
 
     fn new_id() -> String {
@@ -102,6 +177,10 @@ impl ConnectionsStore {
         {
             obj["_id"] = json!(Self::new_id());
         }
+        let conid = obj["_id"].as_str().unwrap_or_default().to_string();
+        if !conid.is_empty() {
+            self.vault_secrets(&conid, &mut obj);
+        }
         let mut items = self.load()?;
         items.push(obj.clone());
         self.save(&items)?;
@@ -120,6 +199,8 @@ impl ConnectionsStore {
                 )
             })?
             .to_string();
+        let mut obj = obj.clone();
+        self.vault_secrets(&id, &mut obj);
         let mut items = self.load()?;
         let mut replaced = false;
         for item in items.iter_mut() {
@@ -132,7 +213,7 @@ impl ConnectionsStore {
             items.push(obj.clone());
         }
         self.save(&items)?;
-        Ok(obj.clone())
+        Ok(obj)
     }
 
     /// Shallow-merge values into the record with `_id`. Mirrors JS `patch()`.
@@ -146,6 +227,7 @@ impl ConnectionsStore {
                         target.insert(k.clone(), v.clone());
                     }
                 }
+                self.vault_secrets(id, item);
                 patched = Some(item.clone());
             }
         }
@@ -281,6 +363,8 @@ pub fn delete(state: &DbgmState, args: Value) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
 
     fn temp_store(tag: &str) -> (ConnectionsStore, PathBuf) {
         let nanos = std::time::SystemTime::now()
@@ -377,6 +461,157 @@ mod tests {
         let arr2 = list(&state, json!({})).unwrap();
         assert_eq!(arr2.as_array().unwrap().len(), 0);
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    struct StubVault {
+        secrets: Mutex<HashMap<String, String>>,
+        fail: bool,
+    }
+
+    impl StubVault {
+        fn ok() -> Self {
+            Self {
+                secrets: Mutex::new(HashMap::new()),
+                fail: false,
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                secrets: Mutex::new(HashMap::new()),
+                fail: true,
+            }
+        }
+    }
+
+    impl CredentialStore for StubVault {
+        fn set_password(&self, user: &str, password: &str) -> keyring::Result<()> {
+            if self.fail {
+                return Err(keyring::Error::NoEntry);
+            }
+            self.secrets
+                .lock()
+                .unwrap()
+                .insert(user.to_string(), password.to_string());
+            Ok(())
+        }
+
+        fn get_password(&self, user: &str) -> keyring::Result<String> {
+            if self.fail {
+                return Err(keyring::Error::NoEntry);
+            }
+            self.secrets
+                .lock()
+                .unwrap()
+                .get(user)
+                .cloned()
+                .ok_or(keyring::Error::NoEntry)
+        }
+
+        fn delete_password(&self, user: &str) -> keyring::Result<()> {
+            if self.fail {
+                return Err(keyring::Error::NoEntry);
+            }
+            self.secrets.lock().unwrap().remove(user);
+            Ok(())
+        }
+    }
+
+    fn vault_store(tag: &str, vault: Box<dyn CredentialStore>) -> (ConnectionsStore, PathBuf) {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("dbgate-connections-{tag}-{nanos}"));
+        let store = ConnectionsStore::with_vault(dir.join("connections.jsonl"), vault);
+        (store, dir)
+    }
+
+    #[test]
+    fn save_with_vault_stub_stores_placeholder_and_get_resolves() {
+        let (store, dir) = vault_store("vaultok", Box::new(StubVault::ok()));
+        let saved = store
+            .insert(json!({
+                "name": "v",
+                "engine": "postgres@dbgate-plugin-postgres",
+                "user": "pg",
+                "password": "dbsecret",
+                "extra": { "sshPassword": "sshsecret", "sshPassphrase": "passphrase" }
+            }))
+            .unwrap();
+        let id = saved["_id"].as_str().unwrap().to_string();
+
+        let raw = fs::read_to_string(&store.path).unwrap();
+        assert!(raw.contains(&format!("keyring:{id}")));
+        assert!(!raw.contains("dbsecret"));
+        assert!(!raw.contains("sshsecret"));
+        assert!(!raw.contains("passphrase"));
+
+        let got = store.get(&id).unwrap();
+        assert_eq!(got["password"].as_str().unwrap(), "dbsecret");
+        assert_eq!(got["extra"]["sshPassword"].as_str().unwrap(), "sshsecret");
+        assert_eq!(
+            got["extra"]["sshPassphrase"].as_str().unwrap(),
+            "passphrase"
+        );
+
+        let listed = store.find().unwrap();
+        assert_eq!(listed[0]["password"].as_str().unwrap(), "dbsecret");
+
+        drop(store);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_with_vault_error_keeps_plaintext_in_file() {
+        let (store, dir) = vault_store("vaultfail", Box::new(StubVault::failing()));
+        let saved = store
+            .insert(json!({
+                "name": "v",
+                "engine": "postgres@dbgate-plugin-postgres",
+                "password": "dbsecret",
+                "extra": { "sshPassword": "sshsecret" }
+            }))
+            .unwrap();
+        let id = saved["_id"].as_str().unwrap().to_string();
+
+        let raw = fs::read_to_string(&store.path).unwrap();
+        assert!(raw.contains("dbsecret"));
+        assert!(raw.contains("sshsecret"));
+        assert!(!raw.contains("keyring:"));
+
+        let got = store.get(&id).unwrap();
+        assert_eq!(got["password"].as_str().unwrap(), "dbsecret");
+        assert_eq!(got["extra"]["sshPassword"].as_str().unwrap(), "sshsecret");
+
+        drop(store);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn update_route_re_vaults_resolved_password() {
+        let (store, dir) = vault_store("vaultrev", Box::new(StubVault::ok()));
+        let saved = store
+            .insert(
+                json!({ "name": "v", "engine": "mysql@dbgate-plugin-mysql", "password": "orig" }),
+            )
+            .unwrap();
+        let id = saved["_id"].as_str().unwrap().to_string();
+
+        let got = store.get(&id).unwrap();
+        assert_eq!(got["password"].as_str().unwrap(), "orig");
+
+        let updated = store
+            .update(&json!({ "_id": id, "name": "v", "password": "newsecret" }))
+            .unwrap();
+        assert_eq!(updated["name"].as_str().unwrap(), "v");
+
+        let raw = fs::read_to_string(&store.path).unwrap();
+        assert!(!raw.contains("newsecret"));
+        assert!(store.get(&id).unwrap()["password"].as_str().unwrap() == "newsecret");
+
+        drop(store);
         let _ = fs::remove_dir_all(&dir);
     }
 }

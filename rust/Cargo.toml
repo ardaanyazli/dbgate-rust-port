@@ -37,6 +37,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # ---- utilities ----
 uuid = { version = "1", features = ["v4"] }
 
+# ---- credential vault (OS keychain / Secret Service / DPAPI) ----
+keyring = "4.2.0"
+
 # ---- tauri v2 ----
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"

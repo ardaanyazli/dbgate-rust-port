@@ -15,6 +15,7 @@ tauri-build.workspace = true
 
 [dependencies]
 dbgate-core = { path = "../dbgate-core" }
+keyring.workspace = true
 tauri.workspace = true
 tauri-plugin-shell.workspace = true
 tauri-plugin-dialog.workspace = true
